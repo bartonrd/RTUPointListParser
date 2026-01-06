@@ -81,11 +81,16 @@ public class PointListParser
         var patterns = new[]
         {
             "page", "date:", "revision", "project", "document",
-            "===", "---", "___", "point list", "point name"
+            "===", "---", "___", "point list"
         };
 
-        // Check if line contains common header column names (but not if it's a CSV with actual data)
-        if (lowerLine.Contains("name") && lowerLine.Contains("address") && lowerLine.Contains("type"))
+        // Check if line starts with common header column names and contains others
+        // This avoids false positives for data rows
+        var startsWithName = lowerLine.StartsWith("name");
+        var containsAddress = lowerLine.Contains("address");
+        var containsType = lowerLine.Contains("type");
+        
+        if (startsWithName && containsAddress && containsType)
         {
             return true;
         }
@@ -132,7 +137,18 @@ public class PointListParser
 
             if (c == '"')
             {
-                inQuotes = !inQuotes;
+                // Check if this is an escaped quote ("")
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    // Add a single quote to the output and skip the next quote
+                    current.Append('"');
+                    i++;
+                }
+                else
+                {
+                    // Toggle quote state
+                    inQuotes = !inQuotes;
+                }
             }
             else if (c == ',' && !inQuotes)
             {
