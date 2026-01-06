@@ -603,7 +603,9 @@ namespace RTUPointlistParse
                 "NORMAL STATE", "1_STATE", "0_STATE", "AOR", " DOG_1 /3  ", "  DOG_2 /4   ",
                 "EMS TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME", "EXISTING POINT NAME",
                 "EXISTING TAB NUM", "ITEM  ", "CONTROL  ADDRESS", "LAN     (CARD_PORT)",
-                "IED ADDRESS", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    "
+                "IED ADDRESS", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    ",
+                "TERMINATION    (BOARD_INPUT) ", "TERMINATION    (BOARD_OUTPUT) ",
+                "DATE ", "PSC TECH ", "TEST TECH ", "LOCAL ", "SYSTEM ", "NOTES"
             };
 
             for (int i = 0; i < headers.Length; i++)
@@ -678,7 +680,9 @@ namespace RTUPointlistParse
                 "LOW LIMIT", "HIGH LIMIT", "       AOR        ", "       DOG_1/3        ",
                 "    DOG_2/4     ", "EMS_TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME",
                 "EXISTING POINT NAME", "EXISTING TAB NUM", "ITEM", "LAN_CARD-PORT",
-                "IED_ADDRESS", "I/O_REGISTER_or DNP_INDEX"
+                "IED_ADDRESS", "I/O_REGISTER_or DNP_INDEX", "PLC_MAPPING   OBJECT_NAME    ",
+                "PT_RATIO:1V ", "CT RATIO:5A    ", "SCALE_RES (OHMS) ", "",  // Col 25 is empty
+                "DATE ", "PSC_TECH ", "TESTMAN ", "LOCAL ", "SYSTEM ", "NOTES"
             };
 
             for (int i = 0; i < headers.Length; i++)
