@@ -212,12 +212,12 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Display detailed diagnostic information for missing tools
+        /// Display detailed diagnostic information for missing tesseract tool
         /// </summary>
-        private static void DisplayToolDiagnostics(string toolName)
+        private static void DisplayTesseractDiagnostics()
         {
-            Console.WriteLine($"  Diagnostic information:");
-            Console.WriteLine($"    - Current PATH variable:");
+            Console.WriteLine("  Diagnostic information:");
+            Console.WriteLine("    - Current PATH variable:");
             
             var pathVar = Environment.GetEnvironmentVariable("PATH");
             if (pathVar != null)
@@ -247,14 +247,14 @@ namespace RTUPointlistParse
                 
                 if (!foundTesseract)
                 {
-                    Console.WriteLine($"      No Tesseract directory found in PATH");
+                    Console.WriteLine("      No Tesseract directory found in PATH");
                 }
             }
             
             // Check common installation locations on Windows
             if (OperatingSystem.IsWindows())
             {
-                Console.WriteLine($"    - Checking common installation locations:");
+                Console.WriteLine("    - Checking common installation locations:");
                 var commonPaths = new[]
                 {
                     @"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -267,8 +267,8 @@ namespace RTUPointlistParse
                     if (File.Exists(path))
                     {
                         Console.WriteLine($"      ✓ Found tesseract.exe at: {path}");
-                        Console.WriteLine($"      → You may need to restart your terminal/IDE for PATH changes to take effect");
-                        Console.WriteLine($"      → Or ensure the directory is in PATH, not just the parent directory");
+                        Console.WriteLine("      → You may need to restart your terminal/IDE for PATH changes to take effect");
+                        Console.WriteLine("      → Or ensure the directory is in PATH, not just the parent directory");
                     }
                 }
             }
@@ -286,32 +286,32 @@ namespace RTUPointlistParse
                 // Check if required tools are available
                 if (!IsToolAvailable("pdftoppm"))
                 {
-                    Console.WriteLine($"  ERROR: 'pdftoppm' not found. OCR requires poppler-utils to be installed.");
-                    Console.WriteLine($"  Installation instructions:");
-                    Console.WriteLine($"    Windows: Download from https://blog.alivate.com.au/poppler-windows/");
-                    Console.WriteLine($"             Extract and add the 'bin' folder to your system PATH");
-                    Console.WriteLine($"    Linux:   sudo apt-get install poppler-utils");
-                    Console.WriteLine($"    macOS:   brew install poppler");
-                    Console.WriteLine($"  ");
-                    Console.WriteLine($"  TROUBLESHOOTING:");
-                    Console.WriteLine($"    - After installing, restart your terminal/IDE/Command Prompt");
-                    Console.WriteLine($"    - Verify installation by running: pdftoppm -v");
+                    Console.WriteLine("  ERROR: 'pdftoppm' not found. OCR requires poppler-utils to be installed.");
+                    Console.WriteLine("  Installation instructions:");
+                    Console.WriteLine("    Windows: Download from https://blog.alivate.com.au/poppler-windows/");
+                    Console.WriteLine("             Extract and add the 'bin' folder to your system PATH");
+                    Console.WriteLine("    Linux:   sudo apt-get install poppler-utils");
+                    Console.WriteLine("    macOS:   brew install poppler");
+                    Console.WriteLine("  ");
+                    Console.WriteLine("  TROUBLESHOOTING:");
+                    Console.WriteLine("    - After installing, restart your terminal/IDE/Command Prompt");
+                    Console.WriteLine("    - Verify installation by running: pdftoppm -v");
                     return string.Empty;
                 }
 
                 if (!IsToolAvailable("tesseract"))
                 {
-                    Console.WriteLine($"  ERROR: 'tesseract' not found. OCR requires Tesseract OCR to be installed.");
-                    Console.WriteLine($"  Installation instructions:");
-                    Console.WriteLine($"    Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki");
-                    Console.WriteLine($"             Install and ensure it's added to your system PATH");
-                    Console.WriteLine($"    Linux:   sudo apt-get install tesseract-ocr");
-                    Console.WriteLine($"    macOS:   brew install tesseract");
-                    Console.WriteLine($"  ");
-                    Console.WriteLine($"  TROUBLESHOOTING:");
-                    Console.WriteLine($"    - After installing, restart your terminal/IDE/Command Prompt");
-                    Console.WriteLine($"    - Verify installation by running: tesseract --version");
-                    DisplayToolDiagnostics("tesseract");
+                    Console.WriteLine("  ERROR: 'tesseract' not found. OCR requires Tesseract OCR to be installed.");
+                    Console.WriteLine("  Installation instructions:");
+                    Console.WriteLine("    Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki");
+                    Console.WriteLine("             Install and ensure it's added to your system PATH");
+                    Console.WriteLine("    Linux:   sudo apt-get install tesseract-ocr");
+                    Console.WriteLine("    macOS:   brew install tesseract");
+                    Console.WriteLine("  ");
+                    Console.WriteLine("  TROUBLESHOOTING:");
+                    Console.WriteLine("    - After installing, restart your terminal/IDE/Command Prompt");
+                    Console.WriteLine("    - Verify installation by running: tesseract --version");
+                    DisplayTesseractDiagnostics();
                     return string.Empty;
                 }
                 
