@@ -10,6 +10,28 @@ namespace RTUPointlistParse
         private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
         private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
+        // Constants for data parsing
+        private const string DEFAULT_AOR_VALUE = "43";  // Default Area of Responsibility
+        private const int MAX_POINT_NAME_TOKENS = 10;   // Maximum tokens to collect for point names
+        private const int MAX_CONTROL_ADDRESS = 100;    // Maximum valid control address value
+        private const string DEFAULT_NORMAL_STATE = "1";  // Default normal state value
+        private const int POINT_NAME_COLUMN_INDEX = 2;  // Column index for point name (Status)
+        private const int POINT_NAME_COLUMN_INDEX_ANALOG = 1;  // Column index for point name (Analog)
+
+        // Cached Regex patterns for better performance
+        private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
+            new System.Text.RegularExpressions.Regex(@"^\d+\s*[|\[]", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex IndexExtractionPattern =
+            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[|\[](.+)", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex AlarmClassPattern =
+            new System.Text.RegularExpressions.Regex(@"Class\s+(\d+)", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex WhitespaceNormalizePattern =
+            new System.Text.RegularExpressions.Regex(@"\s+", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
         public static void Main(string[] args)
         {
             // Parse command-line arguments
@@ -433,11 +455,11 @@ namespace RTUPointlistParse
                     continue;
 
                 // Check if this looks like a data row (starts with number followed by | or [)
-                if (System.Text.RegularExpressions.Regex.IsMatch(trimmedLine, @"^\d+\s*[|\[]"))
+                if (DataRowPattern.IsMatch(trimmedLine))
                 {
                     // Parse this as a status data row
                     var parsedRow = ParseStatusDataRow(trimmedLine, tabIndex);
-                    if (parsedRow != null && parsedRow.Columns.Count > 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[2]))
+                    if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX]))
                     {
                         rows.Add(parsedRow);
                         tabIndex++;
@@ -469,11 +491,11 @@ namespace RTUPointlistParse
                     continue;
 
                 // Check if this looks like a data row
-                if (System.Text.RegularExpressions.Regex.IsMatch(trimmedLine, @"^\d+\s*[|\[]"))
+                if (DataRowPattern.IsMatch(trimmedLine))
                 {
                     // Parse this as an analog data row
                     var parsedRow = ParseAnalogDataRow(trimmedLine, tabIndex);
-                    if (parsedRow != null && parsedRow.Columns.Count > 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[1]))
+                    if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX_ANALOG && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX_ANALOG]))
                     {
                         rows.Add(parsedRow);
                         tabIndex++;
@@ -534,7 +556,7 @@ namespace RTUPointlistParse
             try
             {
                 // Pattern: NUMBER | POINT_NAME ... CONTROL_INFO ... NORMAL_STATE | STATE ... 
-                var match = System.Text.RegularExpressions.Regex.Match(line, @"^(\d+)\s*[|\[](.+)");
+                var match = IndexExtractionPattern.Match(line);
                 if (!match.Success)
                     return null;
 
@@ -569,7 +591,7 @@ namespace RTUPointlistParse
                     normalState,                    // NORMAL STATE
                     state1,                         // 1_STATE
                     state0,                         // 0_STATE
-                    "43",                          // AOR (default)
+                    DEFAULT_AOR_VALUE,              // AOR (default)
                     ExtractAlarmClass(line, 1),    // DOG_1
                     ExtractAlarmClass(line, 2),    // DOG_2
                     "",                            // EMS TP NUMBER (not readily available)
@@ -578,8 +600,9 @@ namespace RTUPointlistParse
 
                 return new TableRow { Columns = columns };
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"  Warning: Failed to parse status row: {ex.Message}");
                 return null;
             }
         }
@@ -592,7 +615,7 @@ namespace RTUPointlistParse
         {
             try
             {
-                var match = System.Text.RegularExpressions.Regex.Match(line, @"^(\d+)\s*[|\[](.+)");
+                var match = IndexExtractionPattern.Match(line);
                 if (!match.Success)
                     return null;
 
@@ -619,15 +642,16 @@ namespace RTUPointlistParse
                     "",                     // UNIT
                     "",                     // LOW LIMIT
                     "",                     // HIGH LIMIT
-                    "43",                   // AOR (default)
+                    DEFAULT_AOR_VALUE,      // AOR (default)
                     ExtractAlarmClass(line, 1),  // DOG_1
                     ExtractAlarmClass(line, 2),  // DOG_2
                 };
 
                 return new TableRow { Columns = columns };
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"  Warning: Failed to parse analog row: {ex.Message}");
                 return null;
             }
         }
@@ -677,7 +701,7 @@ namespace RTUPointlistParse
                 nameTokens.Add(cleaned);
 
                 // Stop after collecting enough tokens (point names are usually 2-6 words)
-                if (nameTokens.Count >= 10)
+                if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
                     break;
             }
 
@@ -685,7 +709,7 @@ namespace RTUPointlistParse
             
             // Final cleanup
             result = result.Replace("  ", " ");  // Remove double spaces
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ");  // Normalize whitespace
+            result = WhitespaceNormalizePattern.Replace(result, " ");  // Normalize whitespace
             
             return result;
         }
@@ -749,13 +773,16 @@ namespace RTUPointlistParse
                 foreach (var token in tokens.Take(3)) // Check first few tokens after name
                 {
                     // Look for a small number
-                    if (int.TryParse(token, out int num) && num >= 0 && num < 100)
+                    if (int.TryParse(token, out int num) && num >= 0 && num < MAX_CONTROL_ADDRESS)
                     {
                         return token;
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Warning: Failed to extract control address: {ex.Message}");
+            }
 
             return "";
         }
@@ -765,7 +792,7 @@ namespace RTUPointlistParse
         /// </summary>
         private static (string normal, string state1, string state0) ExtractStateInfo(string firstSection, string secondSection)
         {
-            string normalState = "1";  // default
+            string normalState = DEFAULT_NORMAL_STATE;  // default
             string state1 = "";
             string state0 = "";
 
@@ -810,14 +837,14 @@ namespace RTUPointlistParse
         private static string ExtractAlarmClass(string line, int classNumber)
         {
             // Look for patterns like "Class 1", "Class 2", etc.
-            var match = System.Text.RegularExpressions.Regex.Match(line, @"Class\s+(\d+)");
+            var match = AlarmClassPattern.Match(line);
             if (match.Success && classNumber == 1)
             {
                 return $"Class {match.Groups[1].Value}";
             }
 
             // Look for second class if exists
-            var matches = System.Text.RegularExpressions.Regex.Matches(line, @"Class\s+(\d+)");
+            var matches = AlarmClassPattern.Matches(line);
             if (matches.Count >= classNumber)
             {
                 return $"Class {matches[classNumber - 1].Groups[1].Value}";
