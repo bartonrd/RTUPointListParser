@@ -212,6 +212,69 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
+        /// Display detailed diagnostic information for missing tools
+        /// </summary>
+        private static void DisplayToolDiagnostics(string toolName)
+        {
+            Console.WriteLine($"  Diagnostic information:");
+            Console.WriteLine($"    - Current PATH variable:");
+            
+            var pathVar = Environment.GetEnvironmentVariable("PATH");
+            if (pathVar != null)
+            {
+                var paths = pathVar.Split(Path.PathSeparator);
+                bool foundTesseract = false;
+                
+                foreach (var path in paths)
+                {
+                    if (path.Contains("Tesseract", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"      Found Tesseract in PATH: {path}");
+                        foundTesseract = true;
+                        
+                        // Check if tesseract.exe exists in this path
+                        var tesseractExe = Path.Combine(path, "tesseract.exe");
+                        if (File.Exists(tesseractExe))
+                        {
+                            Console.WriteLine($"      ✓ tesseract.exe found at: {tesseractExe}");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"      ✗ tesseract.exe NOT found at: {tesseractExe}");
+                        }
+                    }
+                }
+                
+                if (!foundTesseract)
+                {
+                    Console.WriteLine($"      No Tesseract directory found in PATH");
+                }
+            }
+            
+            // Check common installation locations on Windows
+            if (OperatingSystem.IsWindows())
+            {
+                Console.WriteLine($"    - Checking common installation locations:");
+                var commonPaths = new[]
+                {
+                    @"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                    @"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                    @"C:\Tesseract-OCR\tesseract.exe"
+                };
+                
+                foreach (var path in commonPaths)
+                {
+                    if (File.Exists(path))
+                    {
+                        Console.WriteLine($"      ✓ Found tesseract.exe at: {path}");
+                        Console.WriteLine($"      → You may need to restart your terminal/IDE for PATH changes to take effect");
+                        Console.WriteLine($"      → Or ensure the directory is in PATH, not just the parent directory");
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Extract text from PDF using OCR (for image-based PDFs)
         /// </summary>
         private static string ExtractTextFromPdfWithOcr(string pdfPath)
@@ -229,6 +292,10 @@ namespace RTUPointlistParse
                     Console.WriteLine($"             Extract and add the 'bin' folder to your system PATH");
                     Console.WriteLine($"    Linux:   sudo apt-get install poppler-utils");
                     Console.WriteLine($"    macOS:   brew install poppler");
+                    Console.WriteLine($"  ");
+                    Console.WriteLine($"  TROUBLESHOOTING:");
+                    Console.WriteLine($"    - After installing, restart your terminal/IDE/Command Prompt");
+                    Console.WriteLine($"    - Verify installation by running: pdftoppm -v");
                     return string.Empty;
                 }
 
@@ -240,6 +307,11 @@ namespace RTUPointlistParse
                     Console.WriteLine($"             Install and ensure it's added to your system PATH");
                     Console.WriteLine($"    Linux:   sudo apt-get install tesseract-ocr");
                     Console.WriteLine($"    macOS:   brew install tesseract");
+                    Console.WriteLine($"  ");
+                    Console.WriteLine($"  TROUBLESHOOTING:");
+                    Console.WriteLine($"    - After installing, restart your terminal/IDE/Command Prompt");
+                    Console.WriteLine($"    - Verify installation by running: tesseract --version");
+                    DisplayToolDiagnostics("tesseract");
                     return string.Empty;
                 }
                 
