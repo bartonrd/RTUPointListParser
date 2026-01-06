@@ -190,10 +190,23 @@ namespace RTUPointlistParse
                 };
                 process.Start();
                 process.WaitForExit();
-                return process.ExitCode == 0 || process.ExitCode == 1; // Some tools return 1 even when installed
+                // Both exit code 0 (success) and 1 (some tools like pdftoppm) are acceptable
+                // as they indicate the tool exists and responded
+                return process.ExitCode == 0 || process.ExitCode == 1;
             }
-            catch
+            catch (System.ComponentModel.Win32Exception)
             {
+                // Tool not found in PATH (common on Windows)
+                return false;
+            }
+            catch (FileNotFoundException)
+            {
+                // Tool executable not found
+                return false;
+            }
+            catch (Exception)
+            {
+                // Any other error means tool is not accessible
                 return false;
             }
         }
