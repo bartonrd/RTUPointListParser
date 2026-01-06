@@ -425,24 +425,135 @@ namespace RTUPointlistParse
             // Split text into lines
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
+            // Track if we're in the data section
+            bool inDataSection = false;
+            int consecutiveNonDataLines = 0;
+
             foreach (var line in lines)
             {
                 // Skip empty lines
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                // Parse the line into columns (simple split by whitespace for now)
-                var columns = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(c => c.Trim())
-                    .ToList();
+                var trimmedLine = line.Trim();
 
-                if (columns.Count > 0)
+                // Skip metadata and header lines
+                if (IsMetadataOrHeaderLine(trimmedLine))
                 {
-                    rows.Add(new TableRow { Columns = columns });
+                    consecutiveNonDataLines++;
+                    if (consecutiveNonDataLines > 3)
+                        inDataSection = false;
+                    continue;
+                }
+
+                // Check if this looks like a data row
+                if (IsDataRow(trimmedLine))
+                {
+                    inDataSection = true;
+                    consecutiveNonDataLines = 0;
+
+                    // Parse the data row
+                    var parsedRow = ParseDataRow(trimmedLine);
+                    if (parsedRow != null && parsedRow.Columns.Count > 0)
+                    {
+                        rows.Add(parsedRow);
+                    }
+                }
+                else
+                {
+                    consecutiveNonDataLines++;
+                    if (consecutiveNonDataLines > 3)
+                        inDataSection = false;
                 }
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// Check if a line is metadata or header (should be skipped)
+        /// </summary>
+        private static bool IsMetadataOrHeaderLine(string line)
+        {
+            // Skip lines that are clearly metadata
+            if (line.Contains("PLOT BY:") || line.Contains("_PROJECTS\\") ||
+                line.Contains(".dwg") || line.Contains("DIAG") ||
+                line.StartsWith("i ") || line.StartsWith("a ") ||
+                line.Contains("—") && line.Length < 20 ||
+                line.Contains("NOTE") && !System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+"))
+            {
+                return true;
+            }
+
+            // Skip header rows (contain mostly column titles without data)
+            if (line.Contains("POINT NAME") && line.Contains("STATE") ||
+                line.Contains("DEC") && line.Contains("DSCRPT") ||
+                line.Contains("COEFFICIENT") && line.Contains("OFFSET") ||
+                line.Contains("INTERPOSNG") || line.Contains("RELAY NO."))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a line looks like a data row
+        /// </summary>
+        private static bool IsDataRow(string line)
+        {
+            // Data rows start with a number followed by | or [
+            return System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+\s*[|\[]");
+        }
+
+        /// <summary>
+        /// Parse a data row from OCR text
+        /// </summary>
+        private static TableRow? ParseDataRow(string line)
+        {
+            try
+            {
+                // The OCR output contains two columns of data side-by-side
+                // We need to split them and process each separately
+                
+                // First, extract the index at the start
+                var match = System.Text.RegularExpressions.Regex.Match(line, @"^(\d+)\s*[|\[](.+)");
+                if (!match.Success)
+                    return null;
+
+                string index = match.Groups[1].Value;
+                string remainder = match.Groups[2].Value;
+
+                // Split by pipe to get columns, but be careful as pipes appear in multiple places
+                // The general structure is: INDEX | POINT_NAME  CONTROL_ADDR  NORMAL_STATE  1_STATE | 0_STATE  ...
+                
+                // For now, use a simple approach: split by | and take relevant parts
+                var parts = remainder.Split('|');
+                if (parts.Length < 2)
+                    return null;
+
+                // Take the first part which should contain the main data
+                string mainPart = parts[0].Trim();
+                
+                // Split by whitespace and filter
+                var tokens = mainPart.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(t => !string.IsNullOrWhiteSpace(t) && t != "—" && t != "=" && t.Length > 0)
+                    .Select(t => t.Trim())
+                    .ToList();
+
+                if (tokens.Count == 0)
+                    return null;
+
+                // Create a row with the parsed data
+                var columns = new List<string> { index };
+                columns.AddRange(tokens);
+
+                return new TableRow { Columns = columns };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
