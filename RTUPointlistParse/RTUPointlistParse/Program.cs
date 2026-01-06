@@ -47,6 +47,10 @@ namespace RTUPointlistParse
             }
 
             // Collect all table rows from all PDFs
+            // Note: In a real implementation with text-based PDFs, you would need to:
+            // 1. Distinguish between Status and Analog data based on content or filename
+            // 2. Parse different table structures for each type
+            // For image-based PDFs (like the current example), this will result in empty collections
             var allStatusRows = new List<TableRow>();
             var allAnalogRows = new List<TableRow>();
 
@@ -69,12 +73,30 @@ namespace RTUPointlistParse
                         // Parse the table from the extracted text
                         var tableRows = ParseTable(pdfText);
                         
-                        // Determine if this is Status or Analog data based on filename or content
-                        // For now, add to both collections
-                        allStatusRows.AddRange(tableRows);
-                        allAnalogRows.AddRange(tableRows);
-                        
-                        Console.WriteLine($"  Extracted {tableRows.Count} rows");
+                        // TODO: Implement logic to distinguish between Status and Analog data
+                        // This could be based on:
+                        // - Filename patterns (e.g., "sh1" for Status, "sh2" for Analog)
+                        // - PDF content analysis (detecting specific header text)
+                        // - Table structure differences
+                        // For now, attempt to categorize based on filename
+                        string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
+                        if (fileName.Contains("sh1") || fileName.Contains("status"))
+                        {
+                            allStatusRows.AddRange(tableRows);
+                            Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
+                        }
+                        else if (fileName.Contains("sh2") || fileName.Contains("analog"))
+                        {
+                            allAnalogRows.AddRange(tableRows);
+                            Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
+                        }
+                        else
+                        {
+                            // If type is unknown, add to both (suboptimal but safe)
+                            allStatusRows.AddRange(tableRows);
+                            allAnalogRows.AddRange(tableRows);
+                            Console.WriteLine($"  Extracted {tableRows.Count} rows (type unknown)");
+                        }
                     }
                 }
                 catch (Exception ex)
