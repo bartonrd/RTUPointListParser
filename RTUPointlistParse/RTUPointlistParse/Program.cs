@@ -431,14 +431,44 @@ namespace RTUPointlistParse
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                // Parse the line into columns (simple split by whitespace for now)
-                var columns = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(c => c.Trim())
-                    .ToList();
+                // Skip header/footer lines (common patterns)
+                if (line.Contains("PLOT BY:") || line.Contains("P2\\2025_PROJECTS") || 
+                    line.Contains("P1\\2025_PROJECTS") || line.Contains("SOUTHERN") ||
+                    line.Contains("CALIFORNIA") || line.Contains("EDISON") ||
+                    line.Contains("REFERENCE") || line.Contains("DRAWINGS") ||
+                    line.Contains(".dwg") || line.Contains("="))
+                    continue;
 
-                if (columns.Count > 0)
+                // Look for table rows with pipe separators
+                if (line.Contains("|"))
                 {
-                    rows.Add(new TableRow { Columns = columns });
+                    // Split by pipe separator
+                    var columns = line.Split('|')
+                        .Select(c => c.Trim())
+                        .Where(c => !string.IsNullOrWhiteSpace(c))
+                        .ToList();
+
+                    // Filter out header rows (rows that don't start with a number or have common header text)
+                    if (columns.Count > 0)
+                    {
+                        var firstCol = columns[0].Trim();
+                        
+                        // Skip rows that are clearly headers
+                        if (firstCol.Contains("Noe") || firstCol.Contains("POINT NAME") ||
+                            firstCol.Contains("DEC") || firstCol.Contains("STATE") ||
+                            firstCol.Contains("EMS") || firstCol.Contains("STAT") ||
+                            firstCol.Contains("INPUT") || firstCol.Contains("rte") ||
+                            firstCol.Contains("NOTE") || firstCol.Contains("cont") ||
+                            string.IsNullOrWhiteSpace(firstCol))
+                            continue;
+
+                        // Accept rows that start with a number (data rows) or have substantial content
+                        if (int.TryParse(firstCol, out _) || 
+                            (columns.Count > 2 && columns.Any(c => c.Length > 3)))
+                        {
+                            rows.Add(new TableRow { Columns = columns });
+                        }
+                    }
                 }
             }
 
@@ -481,6 +511,7 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 1).Value = "DATE:";
             worksheet.Cell(currentRow, 5).Value = "EMS DEVICE NUM: ";
             worksheet.Cell(currentRow, 10).Value = "POINTLIST REVISION: ";
+            worksheet.Cell(currentRow, 23).Value = "If there is a problem with a point under test, record the issue and corrective action under the notes column here for that point along with any other needed info like eta. ";
 
             currentRow += 2;
             worksheet.Cell(currentRow, 1).Value = "DEVICE NAME: ";
@@ -506,14 +537,18 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 12).Value = "CROSS REFERENCE EXISTING EMS DATA ";
             worksheet.Cell(currentRow, 16).Value = "TAB-1 BASED ";
             worksheet.Cell(currentRow, 17).Value = "IED INFORMATION ";
+            worksheet.Cell(currentRow, 21).Value = "INPUT ";
+            worksheet.Cell(currentRow, 22).Value = "CONTROL ";
 
             currentRow += 2;
             var headers = new[] {
-                "TAB DEC DNP INDEX", "0 BASED CONTROL ADDRESS", "POINT NAME                    ",
-                "NORMAL STATE", "1_STATE", "0_STATE", "AOR", " DOG_1 /3  ", "  DOG_2 /4   ",
-                "EMS TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME", "EXISTING POINT NAME",
-                "EXISTING TAB NUM", "ITEM  ", "CONTROL  ADDRESS", "LAN     (CARD_PORT)",
-                "IED ADDRESS", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    "
+                "TAB DEC DNP INDEX ", "0 BASED CONTROL ADDRESS ", "POINT NAME                    ",
+                "NORMAL STATE ", "1_STATE ", "0_STATE ", "AOR ", " DOG_1 /3  ", "  DOG_2 /4   ",
+                "EMS TP NUMBER ", "VOLTAGE BASE ", "EXISTING DEVICE NAME ", "EXISTING POINT NAME ",
+                "EXISTING TAB NUM ", "ITEM  ", "CONTROL  ADDRESS ", "LAN     (CARD_PORT) ",
+                "IED ADDRESS ", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    ",
+                "TERMINATION    (BOARD_INPUT) ", "TERMINATION    (BOARD_OUTPUT) ", "DATE ", 
+                "PSC TECH ", "TEST TECH ", "LOCAL ", "SYSTEM ", "NOTES "
             };
 
             for (int i = 0; i < headers.Length; i++)
@@ -562,6 +597,7 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 1).Value = "TDBU SAP: ";
             worksheet.Cell(currentRow, 5).Value = "PSC ENGINEER:  ";
             worksheet.Cell(currentRow, 10).Value = "SWITCHING CENTER: ";
+            worksheet.Cell(currentRow, 18).Value = "If there is a problem with a point under test, record the issue and corrective action under the notes column here for that point along with any other needed info like eta. ";
 
             currentRow += 2;
             worksheet.Cell(currentRow, 1).Value = "PSC SAP: ";
@@ -573,6 +609,7 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 1).Value = "EMS DATABASE INFORMATION ";
             worksheet.Cell(currentRow, 14).Value = "CROSS REFERENCE INFORMATION ";
             worksheet.Cell(currentRow, 17).Value = "FIELD INFORMATION ";
+            worksheet.Cell(currentRow, 26).Value = "TESTING INFORMATION ";
 
             currentRow++;
             worksheet.Cell(currentRow, 3).Value = "SCALING ";
@@ -581,14 +618,18 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 9).Value = "ALARMS ";
             worksheet.Cell(currentRow, 14).Value = "EXISTING EMS DATA ";
             worksheet.Cell(currentRow, 17).Value = "IED  INFORMATION ";
+            worksheet.Cell(currentRow, 22).Value = "METERING ";
+            worksheet.Cell(currentRow, 25).Value = "INPUT TERMINATION (BOARD-INPUT) ";
 
             currentRow++;
             var headers = new[] {
-                "TAB DEC DNP INDEX", "POINT NAME", "COEFFICIENT", "OFFSET", "VALUE", "UNIT",
-                "LOW LIMIT", "HIGH LIMIT", "       AOR        ", "       DOG_1/3        ",
-                "    DOG_2/4     ", "EMS_TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME",
-                "EXISTING POINT NAME", "EXISTING TAB NUM", "ITEM", "LAN_CARD-PORT",
-                "IED_ADDRESS", "I/O_REGISTER_or DNP_INDEX"
+                "TAB DEC DNP INDEX ", "POINT NAME ", "COEFFICIENT ", "OFFSET ", "VALUE ", "UNIT ",
+                "LOW LIMIT ", "HIGH LIMIT ", "       AOR        ", "       DOG_1/3        ",
+                "    DOG_2/4     ", "EMS_TP NUMBER ", "VOLTAGE BASE ", "EXISTING DEVICE NAME ",
+                "EXISTING POINT NAME ", "EXISTING TAB NUM ", "ITEM ", "LAN_CARD-PORT ",
+                "IED_ADDRESS ", "I/O_REGISTER_or DNP_INDEX ", "PLC_MAPPING   OBJECT_NAME    ",
+                "PT_RATIO:1V ", "CT RATIO:5A    ", "SCALE_RES (OHMS) ", "", "DATE ", 
+                "PSC_TECH ", "TESTMAN ", "LOCAL ", "SYSTEM ", "NOTES "
             };
 
             for (int i = 0; i < headers.Length; i++)
