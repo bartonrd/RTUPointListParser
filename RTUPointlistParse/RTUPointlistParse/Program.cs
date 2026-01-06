@@ -7,8 +7,8 @@ namespace RTUPointlistParse
 {
     public class Program
     {
-        private const string DefaultInputFolder = "ExamplePointlists/Example1/Input";
-        private const string DefaultOutputFolder = "ExamplePointlists/Example1/TestOutput";
+        private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
+        private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
         public static void Main(string[] args)
         {
