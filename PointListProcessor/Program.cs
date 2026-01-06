@@ -252,17 +252,7 @@ class Program
                     text.AppendLine();
                 }
 
-                string extractedText = text.ToString();
-                
-                // Debug: Show first 500 characters
-                Console.WriteLine($"  DEBUG: Extracted {extractedText.Length} characters");
-                if (extractedText.Length > 0)
-                {
-                    string preview = extractedText.Substring(0, Math.Min(500, extractedText.Length));
-                    Console.WriteLine($"  DEBUG: First 500 chars: {preview.Replace("\n", "\\n").Replace("\r", "\\r")}");
-                }
-                
-                return extractedText;
+                return text.ToString();
             }
         }
         catch (Exception ex)

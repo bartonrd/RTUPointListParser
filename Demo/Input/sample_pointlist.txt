@@ -1,0 +1,18 @@
+RTU Point List - Sample Data
+============================
+
+Point Name     Type            Address    Description
+----------     ----            -------    -----------
+AI_001         analog input    0          Temperature Sensor 1
+AI_002         analog input    1          Pressure Sensor Main
+AI_003         analog input    2          Flow Rate Meter
+DI_001         digital input   100        Door Status Switch
+DI_002         digital input   101        Alarm Contact Active
+DI_003         digital input   102        Pump Running Status
+AO_001         analog output   200        Control Valve Position
+AO_002         analog output   201        Speed Reference Signal
+DO_001         digital output  300        Pump Start Command
+DO_002         digital output  301        Alarm Reset Control
+
+Total Points: 10
+Generated: 2024-01-06
