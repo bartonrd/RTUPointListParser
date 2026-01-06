@@ -24,6 +24,15 @@ namespace PointListProcessor
             {
                 int inputIndex = Array.IndexOf(args, "--input");
                 int outputIndex = Array.IndexOf(args, "--output");
+                
+                // Validate that both flags have corresponding values
+                if (inputIndex + 1 >= args.Length || outputIndex + 1 >= args.Length)
+                {
+                    Console.WriteLine("Error: --input and --output flags require values.");
+                    Console.WriteLine("Usage: PointListProcessor --input <path> --output <path>");
+                    return;
+                }
+                
                 inputFolder = args[inputIndex + 1];
                 outputFolder = args[outputIndex + 1];
             }
@@ -116,8 +125,10 @@ namespace PointListProcessor
             // Split content into lines
             var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
             
-            // Basic parsing logic - this is a simplified example
-            // You would need to customize this based on the actual point list format
+            // Basic parsing logic - this is a simplified example that extracts text
+            // TODO: Customize this regex pattern based on the actual point list format
+            // Current pattern looks for: word word rest_of_line
+            // Real-world formats may require more sophisticated parsing
             foreach (var line in lines)
             {
                 // Skip header lines or empty lines
@@ -125,7 +136,7 @@ namespace PointListProcessor
                     continue;
 
                 // Example regex pattern to extract point information
-                // This would need to be customized based on actual format
+                // This pattern is intentionally simple and should be customized for production use
                 var match = Regex.Match(line, @"(\w+)\s+(\w+)\s+(.+)");
                 if (match.Success)
                 {
