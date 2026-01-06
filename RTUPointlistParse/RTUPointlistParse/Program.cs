@@ -144,7 +144,7 @@ namespace RTUPointlistParse
             try
             {
                 // First, try direct text extraction using PdfPig
-                using (var document = UglyToad.PdfPig.PdfDocument.Open(filePath))
+                using (var document = PdfDocument.Open(filePath))
                 {
                     foreach (var page in document.GetPages())
                     {
@@ -222,7 +222,7 @@ namespace RTUPointlistParse
                     // Perform OCR on each page image
                     foreach (var imageFile in imageFiles)
                     {
-                        var tessProcess = new Process
+                        using (var tessProcess = new Process
                         {
                             StartInfo = new ProcessStartInfo
                             {
@@ -233,13 +233,26 @@ namespace RTUPointlistParse
                                 UseShellExecute = false,
                                 CreateNoWindow = true
                             }
-                        };
+                        })
+                        {
+                            tessProcess.Start();
+                            
+                            // Read output before waiting to avoid deadlock
+                            var text = tessProcess.StandardOutput.ReadToEnd();
+                            var error = tessProcess.StandardError.ReadToEnd();
+                            
+                            tessProcess.WaitForExit();
 
-                        tessProcess.Start();
-                        var text = tessProcess.StandardOutput.ReadToEnd();
-                        tessProcess.WaitForExit();
-
-                        sb.AppendLine(text);
+                            // Only append text if tesseract succeeded
+                            if (tessProcess.ExitCode == 0)
+                            {
+                                sb.AppendLine(text);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"  Tesseract OCR error on {Path.GetFileName(imageFile)}: {error}");
+                            }
+                        }
                     }
 
                     Console.WriteLine($"  OCR completed on {imageFiles.Length} page(s)");
