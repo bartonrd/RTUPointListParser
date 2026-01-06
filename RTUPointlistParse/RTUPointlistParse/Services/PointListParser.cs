@@ -158,16 +158,4 @@ public class PointListParser
         // Only return records that have at least a name
         return !string.IsNullOrWhiteSpace(record.Name) ? record : null;
     }
-
-    /// <summary>
-    /// Normalizes a value by trimming and removing extra whitespace.
-    /// </summary>
-    private string NormalizeValue(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        // Replace multiple spaces with single space
-        return Regex.Replace(value.Trim(), @"\s+", " ");
-    }
 }
