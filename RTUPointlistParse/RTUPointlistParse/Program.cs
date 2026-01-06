@@ -13,7 +13,7 @@ class Program
         try
         {
             // Parse command-line arguments
-            var (inputPath, outputPath) = ParseArguments(args);
+            var (inputPath, outputPath, outputFormat) = ParseArguments(args);
 
             // Validate and create directories
             if (!Directory.Exists(inputPath))
@@ -30,10 +30,11 @@ class Program
 
             Console.WriteLine($"Input folder:  {Path.GetFullPath(inputPath)}");
             Console.WriteLine($"Output folder: {Path.GetFullPath(outputPath)}");
+            Console.WriteLine($"Output format: {outputFormat}");
             Console.WriteLine();
 
             // Process files
-            var result = ProcessFiles(inputPath, outputPath);
+            var result = ProcessFiles(inputPath, outputPath, outputFormat);
 
             Console.WriteLine();
             Console.WriteLine("Processing Summary:");
@@ -58,10 +59,11 @@ class Program
         }
     }
 
-    static (string inputPath, string outputPath) ParseArguments(string[] args)
+    static (string inputPath, string outputPath, string outputFormat) ParseArguments(string[] args)
     {
         string? inputPath = null;
         string? outputPath = null;
+        string outputFormat = "txt";
 
         // Parse command-line arguments
         for (int i = 0; i < args.Length; i++)
@@ -75,6 +77,16 @@ class Program
             {
                 outputPath = args[i + 1];
                 i++;
+            }
+            else if (args[i] == "--format" && i + 1 < args.Length)
+            {
+                outputFormat = args[i + 1].ToLowerInvariant();
+                i++;
+            }
+            else if (args[i] == "--help" || args[i] == "-h")
+            {
+                ShowHelp();
+                Environment.Exit(0);
             }
         }
 
@@ -93,10 +105,40 @@ class Program
             outputPath = string.IsNullOrWhiteSpace(userInput) ? "./TestOutput" : userInput;
         }
 
-        return (inputPath, outputPath);
+        return (inputPath, outputPath, outputFormat);
     }
 
-    static ProcessingResult ProcessFiles(string inputPath, string outputPath)
+    static void ShowHelp()
+    {
+        Console.WriteLine("RTU Point List Processor");
+        Console.WriteLine("========================");
+        Console.WriteLine();
+        Console.WriteLine("Usage:");
+        Console.WriteLine("  RTUPointlistParse [options]");
+        Console.WriteLine();
+        Console.WriteLine("Options:");
+        Console.WriteLine("  --input <path>    Input folder path containing point list files");
+        Console.WriteLine("                    Default: ./Input");
+        Console.WriteLine();
+        Console.WriteLine("  --output <path>   Output folder path for generated files");
+        Console.WriteLine("                    Default: ./TestOutput");
+        Console.WriteLine();
+        Console.WriteLine("  --format <type>   Output format: txt, csv, or json");
+        Console.WriteLine("                    Default: txt");
+        Console.WriteLine();
+        Console.WriteLine("  --help, -h        Show this help message");
+        Console.WriteLine();
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  RTUPointlistParse --input \"./Input\" --output \"./Output\"");
+        Console.WriteLine("  RTUPointlistParse --input \"C:\\Data\\Input\" --output \"C:\\Data\\Output\" --format csv");
+        Console.WriteLine();
+        Console.WriteLine("Supported input formats:");
+        Console.WriteLine("  - PDF files (*.pdf) - text-based only; image-based PDFs require OCR");
+        Console.WriteLine("  - Text files (*.txt)");
+        Console.WriteLine("  - CSV files (*.csv)");
+    }
+
+    static ProcessingResult ProcessFiles(string inputPath, string outputPath, string outputFormat)
     {
         var result = new ProcessingResult();
         var pdfExtractor = new PdfTextExtractor();
@@ -137,7 +179,7 @@ class Program
         // Process each file
         foreach (var filePath in allFiles)
         {
-            ProcessFile(filePath, outputPath, pdfExtractor, parser, writer, result);
+            ProcessFile(filePath, outputPath, outputFormat, pdfExtractor, parser, writer, result);
         }
 
         return result;
@@ -146,6 +188,7 @@ class Program
     static void ProcessFile(
         string filePath,
         string outputPath,
+        string outputFormat,
         PdfTextExtractor pdfExtractor,
         PointListParser parser,
         OutputWriter writer,
@@ -200,11 +243,19 @@ class Program
             }
 
             // Generate output
-            var outputContent = writer.GenerateOutput(records, "txt");
+            var outputContent = writer.GenerateOutput(records, outputFormat);
+
+            // Determine output file extension
+            var outputExtension = outputFormat switch
+            {
+                "csv" => ".csv",
+                "json" => ".json",
+                _ => ".txt"
+            };
 
             // Write output file
             var baseName = Path.GetFileNameWithoutExtension(filePath);
-            var outputFileName = $"{baseName}_output.txt";
+            var outputFileName = $"{baseName}_output{outputExtension}";
             var outputFilePath = Path.Combine(outputPath, outputFileName);
 
             writer.WriteToFile(outputContent, outputFilePath);
