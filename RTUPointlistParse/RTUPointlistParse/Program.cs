@@ -444,6 +444,11 @@ namespace RTUPointlistParse
                     trimmedLine.Contains("SOUTHERN CALIFORNIA") ||
                     trimmedLine.Contains("EDISON") ||
                     trimmedLine.Contains("NOTES:") ||
+                    trimmedLine.Contains("POINT NAME 708 cont") ||  // Header row
+                    trimmedLine.Contains("DEC STATE") ||  // Header row
+                    trimmedLine.Contains("INNNOON") ||  // Header text
+                    trimmedLine.Contains("WINDOW") ||
+                    trimmedLine.StartsWith("Noe ") ||
                     trimmedLine.StartsWith("P1\\") ||
                     trimmedLine.StartsWith("P2\\") ||
                     trimmedLine.StartsWith("*") ||
@@ -474,63 +479,60 @@ namespace RTUPointlistParse
         {
             var result = new List<TableRow>();
             
-            // Split by pipes to get columns
+            // The table has two rows side-by-side.
+            // Pattern: ... | ... stuff ... SPACE+ NUMBER SPACE* | NAME | ...
+            // We need to find where the second row starts
+            
+            // Look for a pattern where we have whitespace, then 1-3 digits, then optional chars, then a pipe
+            // This indicates the start of the second row
+            var pattern = @"\s+(\d{1,3}[_\s]*)\|";
+            var match = System.Text.RegularExpressions.Regex.Match(line, pattern);
+            
+            if (match.Success && match.Index > 50)  // Only if it's far enough into the line (not the first row)
+            {
+                // Split the line at this point
+                var splitPos = match.Index;
+                var leftLine = line.Substring(0, splitPos).Trim();
+                var rightLine = line.Substring(splitPos).Trim();
+                
+                // Parse each half separately
+                var leftRow = ParseSingleRow(leftLine);
+                var rightRow = ParseSingleRow(rightLine);
+                
+                if (leftRow != null && leftRow.Columns.Count > 0)
+                    result.Add(leftRow);
+                if (rightRow != null && rightRow.Columns.Count > 0)
+                    result.Add(rightRow);
+            }
+            else
+            {
+                // Single row
+                var singleRow = ParseSingleRow(line);
+                if (singleRow != null && singleRow.Columns.Count > 0)
+                    result.Add(singleRow);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Parse a single table row by splitting on pipes
+        /// </summary>
+        private static TableRow ParseSingleRow(string line)
+        {
+            var columns = new List<string>();
             var parts = line.Split('|');
             
-            if (parts.Length < 2)
-                return result;
-
-            // The table has two rows side-by-side. We need to split them.
-            // Typical pattern: NUM | NAME | DATA | DATA | ... | NUM | NAME | DATA | DATA | ...
-            
-            // Extract all non-empty columns
-            var allColumns = new List<string>();
             foreach (var part in parts)
             {
                 var cleaned = part.Trim();
                 if (!string.IsNullOrWhiteSpace(cleaned))
                 {
-                    allColumns.Add(cleaned);
+                    columns.Add(cleaned);
                 }
             }
-
-            // Try to identify two separate rows within the line
-            // Look for a second number that looks like a row index (appears after several columns)
-            int splitIndex = -1;
-            for (int i = 10; i < allColumns.Count; i++)  // Start looking after ~10 columns
-            {
-                // Check if this column looks like a row number (1-3 digits possibly followed by underscore or other chars)
-                var col = allColumns[i];
-                if (col.Length > 0 && char.IsDigit(col[0]))
-                {
-                    // Check if there's at least one more column after this (the point name)
-                    if (i + 1 < allColumns.Count)
-                    {
-                        splitIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            if (splitIndex > 0)
-            {
-                // Split into two rows
-                var leftRow = allColumns.Take(splitIndex).ToList();
-                var rightRow = allColumns.Skip(splitIndex).ToList();
-                
-                if (leftRow.Count > 0)
-                    result.Add(new TableRow { Columns = leftRow });
-                if (rightRow.Count > 0)
-                    result.Add(new TableRow { Columns = rightRow });
-            }
-            else
-            {
-                // Single row
-                if (allColumns.Count > 0)
-                    result.Add(new TableRow { Columns = allColumns });
-            }
-
-            return result;
+            
+            return new TableRow { Columns = columns };
         }
 
         /// <summary>
