@@ -10,6 +10,31 @@ namespace RTUPointlistParse
         private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
         private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
+        // Note text used in both Status and Analog sheets
+        private const string TestProblemNoteText = "If there is a problem with a point under test, record the issue and corrective action under the notes column here for that point along with any other needed info like eta. ";
+
+        // Patterns to filter out from OCR text (header/footer content)
+        private static readonly string[] OcrFilterPatterns = new[]
+        {
+            "PLOT BY:",
+            "P2\\2025_PROJECTS",
+            "P1\\2025_PROJECTS",
+            "SOUTHERN",
+            "CALIFORNIA",
+            "EDISON",
+            "REFERENCE",
+            "DRAWINGS",
+            ".dwg",
+            "i 2 3 4 5 6"
+        };
+
+        // Patterns to identify header rows in table data
+        private static readonly string[] TableHeaderPatterns = new[]
+        {
+            "Noe",
+            "rte"
+        };
+
         public static void Main(string[] args)
         {
             // Parse command-line arguments
@@ -431,12 +456,8 @@ namespace RTUPointlistParse
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                // Skip header/footer lines (common patterns)
-                if (line.Contains("PLOT BY:") || line.Contains("P2\\2025_PROJECTS") || 
-                    line.Contains("P1\\2025_PROJECTS") || line.Contains("SOUTHERN") ||
-                    line.Contains("CALIFORNIA") || line.Contains("EDISON") ||
-                    line.Contains("REFERENCE") || line.Contains("DRAWINGS") ||
-                    line.Contains(".dwg") || line.Contains("i 2 3 4 5 6"))
+                // Skip header/footer lines using configured patterns
+                if (OcrFilterPatterns.Any(pattern => line.Contains(pattern)))
                     continue;
 
                 // Look for table rows with pipe separators
@@ -455,14 +476,7 @@ namespace RTUPointlistParse
                         var lineUpper = line.ToUpper();
                         
                         // Skip rows that are clearly column headers or labels
-                        if (lineUpper.Contains("NUMBER") && lineUpper.Contains("POINT NAME") && lineUpper.Contains("CONT"))
-                            continue;
-                        if (lineUpper.Contains("EMS") && lineUpper.Contains("STAT") && lineUpper.Contains("INPUT") && lineUpper.Contains("CTRL"))
-                            continue;
-                        if (lineUpper.Contains("DEC") && lineUpper.Contains("STATE") && lineUpper.Contains("DSCR"))
-                            continue;
-                        if (firstCol.Equals("Noe", StringComparison.OrdinalIgnoreCase) || 
-                            firstCol.Equals("rte", StringComparison.OrdinalIgnoreCase))
+                        if (IsTableHeaderRow(lineUpper, firstCol))
                             continue;
 
                         // Accept rows with at least 2 columns  
@@ -475,6 +489,27 @@ namespace RTUPointlistParse
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// Check if a line is a table header row that should be filtered out
+        /// </summary>
+        private static bool IsTableHeaderRow(string lineUpper, string firstCol)
+        {
+            // Check for common header patterns in first column
+            if (TableHeaderPatterns.Any(pattern => 
+                firstCol.Equals(pattern, StringComparison.OrdinalIgnoreCase)))
+                return true;
+
+            // Check for multi-column header patterns
+            if (lineUpper.Contains("NUMBER") && lineUpper.Contains("POINT NAME") && lineUpper.Contains("CONT"))
+                return true;
+            if (lineUpper.Contains("EMS") && lineUpper.Contains("STAT") && lineUpper.Contains("INPUT") && lineUpper.Contains("CTRL"))
+                return true;
+            if (lineUpper.Contains("DEC") && lineUpper.Contains("STATE") && lineUpper.Contains("DSCR"))
+                return true;
+
+            return false;
         }
 
         /// <summary>
@@ -513,7 +548,7 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 1).Value = "DATE:";
             worksheet.Cell(currentRow, 5).Value = "EMS DEVICE NUM: ";
             worksheet.Cell(currentRow, 10).Value = "POINTLIST REVISION: ";
-            worksheet.Cell(currentRow, 23).Value = "If there is a problem with a point under test, record the issue and corrective action under the notes column here for that point along with any other needed info like eta. ";
+            worksheet.Cell(currentRow, 23).Value = TestProblemNoteText;
 
             currentRow += 2;
             worksheet.Cell(currentRow, 1).Value = "DEVICE NAME: ";
@@ -599,7 +634,7 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 1).Value = "TDBU SAP: ";
             worksheet.Cell(currentRow, 5).Value = "PSC ENGINEER:  ";
             worksheet.Cell(currentRow, 10).Value = "SWITCHING CENTER: ";
-            worksheet.Cell(currentRow, 18).Value = "If there is a problem with a point under test, record the issue and corrective action under the notes column here for that point along with any other needed info like eta. ";
+            worksheet.Cell(currentRow, 18).Value = TestProblemNoteText;
 
             currentRow += 2;
             worksheet.Cell(currentRow, 1).Value = "PSC SAP: ";
