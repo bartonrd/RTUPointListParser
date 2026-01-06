@@ -1,6 +1,7 @@
 ﻿using UglyToad.PdfPig;
 using ClosedXML.Excel;
 using System.Text;
+using System.Diagnostics;
 
 namespace RTUPointlistParse
 {
@@ -134,7 +135,7 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Extract text content from a PDF file
+        /// Extract text content from a PDF file, using OCR if necessary
         /// </summary>
         public static string ExtractTextFromPdf(string filePath)
         {
@@ -142,12 +143,22 @@ namespace RTUPointlistParse
 
             try
             {
-                using (var document = PdfDocument.Open(filePath))
+                // First, try direct text extraction using PdfPig
+                using (var document = UglyToad.PdfPig.PdfDocument.Open(filePath))
                 {
                     foreach (var page in document.GetPages())
                     {
                         sb.AppendLine(page.Text);
                     }
+                }
+
+                // If no text was extracted, try OCR
+                if (string.IsNullOrWhiteSpace(sb.ToString()))
+                {
+                    Console.WriteLine($"  No text found, attempting OCR...");
+                    var ocrText = ExtractTextFromPdfWithOcr(filePath);
+                    sb.Clear();
+                    sb.Append(ocrText);
                 }
             }
             catch (Exception ex)
@@ -156,6 +167,102 @@ namespace RTUPointlistParse
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Extract text from PDF using OCR (for image-based PDFs)
+        /// </summary>
+        private static string ExtractTextFromPdfWithOcr(string pdfPath)
+        {
+            try
+            {
+                Console.WriteLine($"  Performing OCR on PDF...");
+                
+                // Create a temporary directory for image files
+                string tempDir = Path.Combine(Path.GetTempPath(), $"pdf_ocr_{Guid.NewGuid()}");
+                Directory.CreateDirectory(tempDir);
+
+                try
+                {
+                    // Convert PDF pages to images using pdftoppm
+                    var ppmProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "pdftoppm",
+                            Arguments = $"-png \"{pdfPath}\" \"{Path.Combine(tempDir, "page")}\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    ppmProcess.Start();
+                    ppmProcess.WaitForExit();
+
+                    if (ppmProcess.ExitCode != 0)
+                    {
+                        var error = ppmProcess.StandardError.ReadToEnd();
+                        Console.WriteLine($"  Error converting PDF to images: {error}");
+                        return string.Empty;
+                    }
+
+                    // Get all generated image files
+                    var imageFiles = Directory.GetFiles(tempDir, "*.png").OrderBy(f => f).ToArray();
+                    
+                    if (imageFiles.Length == 0)
+                    {
+                        Console.WriteLine($"  No images generated from PDF");
+                        return string.Empty;
+                    }
+
+                    var sb = new StringBuilder();
+
+                    // Perform OCR on each page image
+                    foreach (var imageFile in imageFiles)
+                    {
+                        var tessProcess = new Process
+                        {
+                            StartInfo = new ProcessStartInfo
+                            {
+                                FileName = "tesseract",
+                                Arguments = $"\"{imageFile}\" stdout",
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true,
+                                UseShellExecute = false,
+                                CreateNoWindow = true
+                            }
+                        };
+
+                        tessProcess.Start();
+                        var text = tessProcess.StandardOutput.ReadToEnd();
+                        tessProcess.WaitForExit();
+
+                        sb.AppendLine(text);
+                    }
+
+                    Console.WriteLine($"  OCR completed on {imageFiles.Length} page(s)");
+                    return sb.ToString();
+                }
+                finally
+                {
+                    // Clean up temporary files
+                    try
+                    {
+                        Directory.Delete(tempDir, true);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup errors
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  OCR extraction error: {ex.Message}");
+                return string.Empty;
+            }
         }
 
         /// <summary>
