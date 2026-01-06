@@ -104,23 +104,59 @@ Compares two Excel files and reports differences.
 
 - **PdfPig (1.7.0-custom-5)**: PDF text extraction
 - **ClosedXML (0.105.0)**: Excel file generation and manipulation
+- **Tesseract OCR**: Optical Character Recognition for image-based PDFs (via system binary)
+- **Poppler Utils**: PDF to image conversion (via pdftoppm)
 
-## Known Limitations
+## OCR Support for Image-Based PDFs
 
-### Image-Based PDFs
-The application uses text extraction from PDFs. If the PDF files are image-based (scanned documents or graphics-only), the text extraction will not work. In such cases:
+The application automatically handles image-based PDFs (scanned documents) using OCR:
 
-- The application will display a warning: "No text extracted from PDF. The PDF may be image-based."
-- An Excel file will still be generated with the proper template structure
-- The Excel file will contain headers but no data rows
+### How It Works
 
-**Workaround for image-based PDFs:**
-To process image-based PDFs, you would need to implement OCR (Optical Character Recognition) using additional libraries such as:
-- Tesseract.NET
-- Azure Computer Vision API
-- Google Cloud Vision API
+1. **Text Extraction First**: Attempts to extract text directly from the PDF using PdfPig
+2. **OCR Fallback**: If no text is found, automatically:
+   - Converts PDF pages to images using `pdftoppm`
+   - Performs OCR using Tesseract
+   - Extracts text from the images
+3. **Data Parsing**: Parses the extracted text into structured table data
 
-This is beyond the scope of the current implementation.
+### System Requirements for OCR
+
+The application requires the following system packages for OCR functionality:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install tesseract-ocr poppler-utils
+
+# macOS
+brew install tesseract poppler
+
+# Windows
+# Install from: https://github.com/UB-Mannheim/tesseract/wiki
+# Install from: https://blog.alivate.com.au/poppler-windows/
+```
+
+### OCR Performance
+
+- **Accuracy**: Depends on PDF image quality and resolution
+- **Speed**: Processes approximately 1-2 pages per second
+- **Output**: Extracts text data even from scanned/image-only PDFs
+
+### Example OCR Output
+
+```
+Processing: Control115_sh2_145937196.pdf
+  No text found, attempting OCR...
+  Performing OCR on PDF...
+  OCR completed on 1 page(s)
+  Extracted 100 Analog rows
+
+Processing: Control115_sh1_145934779.pdf
+  No text found, attempting OCR...
+  Performing OCR on PDF...
+  OCR completed on 1 page(s)
+  Extracted 97 Status rows
+```
 
 ## Example Output
 
