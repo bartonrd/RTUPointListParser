@@ -1,0 +1,10 @@
+# Sample Point List
+# This is a test file for the RTU Point List Processor
+
+Point List Data:
+
+0 | DC CNTR BUS MONITOR | Status | 1 | NORMAL | ALARM
+1 | OXBOW 115KV CB | Status | 1 | CLOSE | OPEN
+2 | OXBOW CUST CB | Status | 1 | CLOSE | OPEN
+3 | DIXIE VALLEY CUST CB | Status | 1 | CLOSE | OPEN
+4 | 1 BANK HYDROGEN | Status | 1 | NORMAL | ALARM
