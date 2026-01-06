@@ -416,3 +416,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Application-specific folders
+Input/
+TestOutput/
+ExamplePointlists/**/TestOutput/

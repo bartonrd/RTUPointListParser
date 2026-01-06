@@ -1,4 +1,5 @@
 using RTUPointlistParse.Models;
+using System.Text.RegularExpressions;
 
 namespace RTUPointlistParse.Services;
 
@@ -17,6 +18,9 @@ public class PointListParser
         var records = new List<PointRecord>();
         var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
+        // Detect if this is a CSV format (check if first data line has commas)
+        bool isCSV = DetectCSVFormat(lines);
+
         foreach (var line in lines)
         {
             // Skip empty lines or lines with only whitespace
@@ -29,7 +33,7 @@ public class PointListParser
 
             try
             {
-                var record = ParseLine(line);
+                var record = isCSV ? ParseCSVLine(line) : ParseLine(line);
                 if (record != null)
                 {
                     records.Add(record);
@@ -46,6 +50,27 @@ public class PointListParser
     }
 
     /// <summary>
+    /// Detects if content is in CSV format.
+    /// </summary>
+    private bool DetectCSVFormat(string[] lines)
+    {
+        // Look at first few non-empty, non-header lines
+        foreach (var line in lines.Take(10))
+        {
+            if (string.IsNullOrWhiteSpace(line) || IsHeaderOrFooter(line))
+                continue;
+
+            // If line has commas, likely CSV
+            if (line.Contains(','))
+                return true;
+
+            break;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Checks if a line is likely a header or footer.
     /// </summary>
     private bool IsHeaderOrFooter(string line)
@@ -56,11 +81,72 @@ public class PointListParser
         var patterns = new[]
         {
             "page", "date:", "revision", "project", "document",
-            "===", "---", "___", "point list", "point name",
-            "address", "type", "unit", "description"
+            "===", "---", "___", "point list", "point name"
         };
 
+        // Check if line contains common header column names (but not if it's a CSV with actual data)
+        if (lowerLine.Contains("name") && lowerLine.Contains("address") && lowerLine.Contains("type"))
+        {
+            return true;
+        }
+
         return patterns.Any(pattern => lowerLine.Contains(pattern));
+    }
+
+    /// <summary>
+    /// Parses a CSV line into a PointRecord.
+    /// </summary>
+    private PointRecord? ParseCSVLine(string line)
+    {
+        // Simple CSV parser - handles quoted fields
+        var parts = SplitCSV(line);
+
+        // Need at least a name to create a record
+        if (parts.Count == 0 || string.IsNullOrWhiteSpace(parts[0]))
+            return null;
+
+        var record = new PointRecord
+        {
+            Name = parts.Count > 0 ? parts[0].Trim() : string.Empty,
+            Address = parts.Count > 1 ? parts[1].Trim() : string.Empty,
+            Type = parts.Count > 2 ? parts[2].Trim() : string.Empty,
+            Unit = parts.Count > 3 ? parts[3].Trim() : string.Empty,
+            Description = parts.Count > 4 ? parts[4].Trim() : string.Empty
+        };
+
+        return record;
+    }
+
+    /// <summary>
+    /// Splits a CSV line respecting quoted fields.
+    /// </summary>
+    private List<string> SplitCSV(string line)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+            }
+            else if (c == ',' && !inQuotes)
+            {
+                result.Add(current.ToString());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+
+        result.Add(current.ToString());
+        return result;
     }
 
     /// <summary>
@@ -68,11 +154,10 @@ public class PointListParser
     /// </summary>
     private PointRecord? ParseLine(string line)
     {
-        // Normalize whitespace (tabs to spaces, multiple spaces to single)
-        var normalizedLine = System.Text.RegularExpressions.Regex.Replace(line.Trim(), @"\s+", " ");
-
-        // Split by multiple spaces or tabs to handle column-based formats
-        var parts = normalizedLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        // Split by tabs first, then by multiple spaces (2 or more)
+        var parts = Regex.Split(line.Trim(), @"\t+|\s{2,}")
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToArray();
 
         // Need at least a name to create a record
         if (parts.Length == 0)
@@ -81,11 +166,11 @@ public class PointListParser
         // Basic parsing - customize based on actual point list format
         var record = new PointRecord
         {
-            Name = parts.Length > 0 ? parts[0] : string.Empty,
-            Address = parts.Length > 1 ? parts[1] : string.Empty,
-            Type = parts.Length > 2 ? parts[2] : string.Empty,
-            Unit = parts.Length > 3 ? parts[3] : string.Empty,
-            Description = parts.Length > 4 ? string.Join(" ", parts.Skip(4)) : string.Empty
+            Name = parts.Length > 0 ? parts[0].Trim() : string.Empty,
+            Address = parts.Length > 1 ? parts[1].Trim() : string.Empty,
+            Type = parts.Length > 2 ? parts[2].Trim() : string.Empty,
+            Unit = parts.Length > 3 ? parts[3].Trim() : string.Empty,
+            Description = parts.Length > 4 ? string.Join(" ", parts.Skip(4).Select(p => p.Trim())) : string.Empty
         };
 
         return record;
