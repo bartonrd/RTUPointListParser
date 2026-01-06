@@ -425,24 +425,247 @@ namespace RTUPointlistParse
             // Split text into lines
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
+            // Detect if this is Status or Analog data based on content
+            bool isStatusData = pdfText.Contains("STATUS STATE PAIR") || 
+                                (pdfText.Contains("NORMAL") && pdfText.Contains("ALARM"));
+            bool isAnalogData = pdfText.Contains("COEFFICIENT") || pdfText.Contains("OFFSET") || 
+                                pdfText.Contains("FULL SCALE") || pdfText.Contains("SCALING");
+
+            // Parse each line looking for table data rows
+            // The table has a specific format with TAB DEC number at start of each row
             foreach (var line in lines)
             {
-                // Skip empty lines
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                // Parse the line into columns (simple split by whitespace for now)
-                var columns = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(c => c.Trim())
-                    .ToList();
+                // Skip header lines
+                if (line.Contains("POINT NAME") && line.Contains("DNP"))
+                    continue;
+                if (line.Contains("DEC STATE"))
+                    continue;
+                if (line.Contains("PLOT BY:") || line.Contains("ISSUED FOR"))
+                    continue;
 
-                if (columns.Count > 0)
+                // Look for table data rows: start with number, followed by pipe or spaces, then data
+                // Pattern: "NUMBER | POINT_NAME | ..." or "NUMBER spaces DATA..."
+                var match = System.Text.RegularExpressions.Regex.Match(line, 
+                    @"^(\d+)\s*[\|_\s]+(.+)");
+                
+                if (match.Success)
                 {
-                    rows.Add(new TableRow { Columns = columns });
+                    var parsedRows = ParseTableLine(match, isStatusData, isAnalogData);
+                    rows.AddRange(parsedRows);
                 }
             }
 
-            return rows;
+            // Remove duplicates and sort by DNP INDEX
+            // Also filter out invalid entries
+            var uniqueRows = new Dictionary<int, TableRow>();
+            foreach (var row in rows)
+            {
+                if (row.Columns.Count > 0)
+                {
+                    var dnpIndexStr = System.Text.RegularExpressions.Regex.Replace(
+                        row.Columns[0].Trim(), @"[_\s]+$", "");
+                    
+                    if (int.TryParse(dnpIndexStr, out int dnpIndex))
+                    {
+                        // Filter out invalid DNP indices
+                        // Valid range is typically 0-300 for point lists
+                        if (dnpIndex < 0 || dnpIndex >= 500)
+                            continue;
+                        
+                        // Filter out rows with no meaningful point name
+                        if (row.Columns.Count < 3 || string.IsNullOrWhiteSpace(row.Columns[2]))
+                            continue;
+                        
+                        // Filter out rows where point name is just special characters or very short
+                        var pointName = row.Columns[2].Trim();
+                        if (pointName.Length < 2 || pointName.All(c => !char.IsLetterOrDigit(c)))
+                            continue;
+                        
+                        // Keep the row with more columns (more complete data)
+                        if (!uniqueRows.ContainsKey(dnpIndex) || 
+                            uniqueRows[dnpIndex].Columns.Count < row.Columns.Count)
+                        {
+                            uniqueRows[dnpIndex] = row;
+                        }
+                    }
+                }
+            }
+
+            // Return sorted list
+            return uniqueRows.OrderBy(kvp => kvp.Key).Select(kvp => kvp.Value).ToList();
+        }
+
+        /// <summary>
+        /// Parse a table line that may contain one or two data entries (left and right columns)
+        /// </summary>
+        private static List<TableRow> ParseTableLine(System.Text.RegularExpressions.Match match, 
+                                                      bool isStatusData, bool isAnalogData)
+        {
+            var result = new List<TableRow>();
+            var fullLine = match.Value;
+            
+            // The line contains two entries side by side (left and right table columns)
+            // Pattern: "NUMBER | DATA ... NUMBER[_|] DATA"
+            // Split by finding positions where we have a number followed by | or __|
+            // that appears after some content (not at the start)
+            
+            var regex = new System.Text.RegularExpressions.Regex(@"(\d+)\s*[_\s]*\|");
+            var matches = regex.Matches(fullLine);
+            
+            if (matches.Count > 1)
+            {
+                // Multiple entries on this line
+                for (int i = 0; i < matches.Count; i++)
+                {
+                    var startPos = matches[i].Index;
+                    var endPos = (i < matches.Count - 1) ? matches[i + 1].Index : fullLine.Length;
+                    var entry = fullLine.Substring(startPos, endPos - startPos).Trim();
+                    
+                    var columns = ParseDataEntry(entry, isStatusData, isAnalogData);
+                    if (columns.Count > 0)
+                    {
+                        result.Add(new TableRow { Columns = columns });
+                    }
+                }
+            }
+            else if (matches.Count == 1)
+            {
+                // Single entry
+                var columns = ParseDataEntry(fullLine, isStatusData, isAnalogData);
+                if (columns.Count > 0)
+                {
+                    result.Add(new TableRow { Columns = columns });
+                }
+            }
+            
+            return result;
+        }
+
+        /// <summary>
+        /// Parse a single data entry from the table
+        /// </summary>
+        private static List<string> ParseDataEntry(string entry, bool isStatusData, bool isAnalogData)
+        {
+            var columns = new List<string>();
+            
+            // Extract DNP INDEX (first number)
+            var dnpMatch = System.Text.RegularExpressions.Regex.Match(entry, @"^(\d+)");
+            if (!dnpMatch.Success)
+                return columns;
+            
+            var dnpIndex = dnpMatch.Groups[1].Value;
+            columns.Add(dnpIndex);
+            
+            // Remove DNP index and leading separator from entry
+            var remainingData = entry.Substring(dnpMatch.Length).TrimStart('|', '_', ' ', '\t');
+            
+            if (isStatusData)
+            {
+                // Status format: [CONTROL_ADDR] POINT_NAME [NORMAL_STATE] [STATE1] [STATE0] ...
+                // Split by pipe to separate major sections
+                var parts = remainingData.Split('|').Select(p => p.Trim()).ToArray();
+                
+                if (parts.Length > 0)
+                {
+                    // First part: may contain point name and optional control address
+                    var firstPart = parts[0];
+                    var words = firstPart.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    
+                    string controlAddr = "";
+                    string pointName = "";
+                    
+                    // Look for control address (a number after point name or at specific position)
+                    // Common patterns: "POINT_NAME CTRL_NUM" or "CTRL_NUM POINT_NAME"
+                    if (words.Length > 0)
+                    {
+                        // Try to find control address - it's usually a standalone number
+                        int ctrlAddrIndex = -1;
+                        for (int i = 0; i < words.Length; i++)
+                        {
+                            if (int.TryParse(words[i], out int val) && val < 100 && i > 0)
+                            {
+                                ctrlAddrIndex = i;
+                                break;
+                            }
+                        }
+                        
+                        if (ctrlAddrIndex > 0)
+                        {
+                            controlAddr = words[ctrlAddrIndex];
+                            // Point name is words before control address
+                            pointName = string.Join(" ", words.Take(ctrlAddrIndex));
+                        }
+                        else
+                        {
+                            // No control address found, entire first part is point name
+                            pointName = firstPart;
+                        }
+                    }
+                    
+                    columns.Add(controlAddr);  // CONTROL ADDRESS (col 2)
+                    columns.Add(pointName);    // POINT NAME (col 3)
+                }
+                
+                // Extract state information from second part if present
+                if (parts.Length > 1)
+                {
+                    var statePart = parts[1];
+                    string normalState = "";
+                    string state1 = "";
+                    string state0 = "";
+                    
+                    // Look for state patterns: "CLOSE | OPEN" or "NORMAL | ALARM"
+                    if (statePart.Contains("CLOSE") || statePart.Contains("OPEN"))
+                    {
+                        normalState = "1";
+                        state1 = "CLOSE";
+                        state0 = "OPEN";
+                    }
+                    else if (statePart.Contains("NORMAL") && statePart.Contains("ALARM"))
+                    {
+                        // Determine normal state based on order
+                        if (statePart.IndexOf("NORMAL") < statePart.IndexOf("ALARM"))
+                        {
+                            normalState = "1";
+                            state1 = "NORMAL";
+                            state0 = "ALARM";
+                        }
+                        else
+                        {
+                            normalState = "0";
+                            state1 = "ALARM";
+                            state0 = "NORMAL";
+                        }
+                    }
+                    else if (statePart.Contains("ALARM"))
+                    {
+                        normalState = "0";
+                        state1 = "ALARM";
+                        state0 = "NORMAL";
+                    }
+                    
+                    columns.Add(normalState); // NORMAL STATE (col 4)
+                    columns.Add(state1);      // 1_STATE (col 5)
+                    columns.Add(state0);      // 0_STATE (col 6)
+                }
+            }
+            else if (isAnalogData)
+            {
+                // Analog format: POINT_NAME [COEFFICIENT] [OFFSET] [VALUE] [UNIT] ...
+                // For now, just extract point name from first part
+                var parts = remainingData.Split('|').Select(p => p.Trim()).ToArray();
+                
+                if (parts.Length > 0)
+                {
+                    var pointName = parts[0].Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    columns.Add(string.Join(" ", pointName)); // POINT NAME (col 2)
+                }
+            }
+
+            return columns;
         }
 
         /// <summary>
