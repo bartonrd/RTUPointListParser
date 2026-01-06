@@ -170,6 +170,35 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
+        /// Check if a command-line tool is available in the system PATH
+        /// </summary>
+        private static bool IsToolAvailable(string toolName)
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = toolName,
+                        Arguments = "--version",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+                process.Start();
+                process.WaitForExit();
+                return process.ExitCode == 0 || process.ExitCode == 1; // Some tools return 1 even when installed
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Extract text from PDF using OCR (for image-based PDFs)
         /// </summary>
         private static string ExtractTextFromPdfWithOcr(string pdfPath)
@@ -177,6 +206,29 @@ namespace RTUPointlistParse
             try
             {
                 Console.WriteLine($"  Performing OCR on PDF...");
+                
+                // Check if required tools are available
+                if (!IsToolAvailable("pdftoppm"))
+                {
+                    Console.WriteLine($"  ERROR: 'pdftoppm' not found. OCR requires poppler-utils to be installed.");
+                    Console.WriteLine($"  Installation instructions:");
+                    Console.WriteLine($"    Windows: Download from https://blog.alivate.com.au/poppler-windows/");
+                    Console.WriteLine($"             Extract and add the 'bin' folder to your system PATH");
+                    Console.WriteLine($"    Linux:   sudo apt-get install poppler-utils");
+                    Console.WriteLine($"    macOS:   brew install poppler");
+                    return string.Empty;
+                }
+
+                if (!IsToolAvailable("tesseract"))
+                {
+                    Console.WriteLine($"  ERROR: 'tesseract' not found. OCR requires Tesseract OCR to be installed.");
+                    Console.WriteLine($"  Installation instructions:");
+                    Console.WriteLine($"    Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki");
+                    Console.WriteLine($"             Install and ensure it's added to your system PATH");
+                    Console.WriteLine($"    Linux:   sudo apt-get install tesseract-ocr");
+                    Console.WriteLine($"    macOS:   brew install tesseract");
+                    return string.Empty;
+                }
                 
                 // Create a temporary directory for image files
                 string tempDir = Path.Combine(Path.GetTempPath(), $"pdf_ocr_{Guid.NewGuid()}");

@@ -124,16 +124,37 @@ The application automatically handles image-based PDFs (scanned documents) using
 
 The application requires the following system packages for OCR functionality:
 
+#### Windows
+
+1. **Tesseract OCR**:
+   - Download installer from: https://github.com/UB-Mannheim/tesseract/wiki
+   - Run the installer (recommended path: `C:\Program Files\Tesseract-OCR`)
+   - **Important**: During installation, check "Add to PATH" or manually add to system PATH
+   - Verify installation: Open Command Prompt and run `tesseract --version`
+
+2. **Poppler Utils**:
+   - Download from: https://blog.alivate.com.au/poppler-windows/
+   - Extract the ZIP file (e.g., to `C:\Program Files\poppler`)
+   - Add the `bin` folder to your system PATH (e.g., `C:\Program Files\poppler\bin`)
+   - Verify installation: Open Command Prompt and run `pdftoppm -v`
+
+**Adding to PATH on Windows:**
+- Right-click "This PC" → Properties → Advanced system settings → Environment Variables
+- Under "System variables", find "Path" and click Edit
+- Click "New" and add the path to the tool's bin folder
+- Click OK and restart your Command Prompt/PowerShell
+
+#### Linux (Ubuntu/Debian)
+
 ```bash
-# Ubuntu/Debian
+sudo apt-get update
 sudo apt-get install tesseract-ocr poppler-utils
+```
 
-# macOS
+#### macOS
+
+```bash
 brew install tesseract poppler
-
-# Windows
-# Install from: https://github.com/UB-Mannheim/tesseract/wiki
-# Install from: https://blog.alivate.com.au/poppler-windows/
 ```
 
 ### OCR Performance
