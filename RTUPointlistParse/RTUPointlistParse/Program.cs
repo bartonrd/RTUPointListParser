@@ -431,18 +431,106 @@ namespace RTUPointlistParse
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
-                // Parse the line into columns (simple split by whitespace for now)
-                var columns = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(c => c.Trim())
-                    .ToList();
+                // Look for lines that appear to be data rows
+                // Data rows typically start with a number followed by whitespace or pipe
+                // and contain pipe separators
+                var trimmedLine = line.Trim();
+                
+                // Skip header lines, metadata, and other non-data lines
+                if (trimmedLine.Contains("PLOT BY:") ||
+                    trimmedLine.Contains("REFERENCE DRAWINGS") ||
+                    trimmedLine.Contains("LOCATION:") ||
+                    trimmedLine.Contains("SHEET NO") ||
+                    trimmedLine.Contains("SOUTHERN CALIFORNIA") ||
+                    trimmedLine.Contains("EDISON") ||
+                    trimmedLine.Contains("NOTES:") ||
+                    trimmedLine.StartsWith("P1\\") ||
+                    trimmedLine.StartsWith("P2\\") ||
+                    trimmedLine.StartsWith("*") ||
+                    trimmedLine.StartsWith("red") ||
+                    trimmedLine.StartsWith("F Z") ||
+                    trimmedLine.StartsWith("——|") ||
+                    trimmedLine.Contains("5640067") ||
+                    trimmedLine.Contains("5640066") ||
+                    trimmedLine.Contains("5640065") ||
+                    trimmedLine.Contains("5640064") ||
+                    trimmedLine.Contains("585409") ||
+                    !trimmedLine.Contains("|"))
+                    continue;
 
-                if (columns.Count > 0)
-                {
-                    rows.Add(new TableRow { Columns = columns });
-                }
+                // Split the line into two halves (left and right table sections)
+                // The table is formatted with two sets of columns side by side
+                var parsedRows = ParseTableLine(trimmedLine);
+                rows.AddRange(parsedRows);
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// Parse a single line that may contain one or two table rows
+        /// </summary>
+        private static List<TableRow> ParseTableLine(string line)
+        {
+            var result = new List<TableRow>();
+            
+            // Split by pipes to get columns
+            var parts = line.Split('|');
+            
+            if (parts.Length < 2)
+                return result;
+
+            // The table has two rows side-by-side. We need to split them.
+            // Typical pattern: NUM | NAME | DATA | DATA | ... | NUM | NAME | DATA | DATA | ...
+            
+            // Extract all non-empty columns
+            var allColumns = new List<string>();
+            foreach (var part in parts)
+            {
+                var cleaned = part.Trim();
+                if (!string.IsNullOrWhiteSpace(cleaned))
+                {
+                    allColumns.Add(cleaned);
+                }
+            }
+
+            // Try to identify two separate rows within the line
+            // Look for a second number that looks like a row index (appears after several columns)
+            int splitIndex = -1;
+            for (int i = 10; i < allColumns.Count; i++)  // Start looking after ~10 columns
+            {
+                // Check if this column looks like a row number (1-3 digits possibly followed by underscore or other chars)
+                var col = allColumns[i];
+                if (col.Length > 0 && char.IsDigit(col[0]))
+                {
+                    // Check if there's at least one more column after this (the point name)
+                    if (i + 1 < allColumns.Count)
+                    {
+                        splitIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (splitIndex > 0)
+            {
+                // Split into two rows
+                var leftRow = allColumns.Take(splitIndex).ToList();
+                var rightRow = allColumns.Skip(splitIndex).ToList();
+                
+                if (leftRow.Count > 0)
+                    result.Add(new TableRow { Columns = leftRow });
+                if (rightRow.Count > 0)
+                    result.Add(new TableRow { Columns = rightRow });
+            }
+            else
+            {
+                // Single row
+                if (allColumns.Count > 0)
+                    result.Add(new TableRow { Columns = allColumns });
+            }
+
+            return result;
         }
 
         /// <summary>
