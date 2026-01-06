@@ -436,7 +436,7 @@ namespace RTUPointlistParse
                     line.Contains("P1\\2025_PROJECTS") || line.Contains("SOUTHERN") ||
                     line.Contains("CALIFORNIA") || line.Contains("EDISON") ||
                     line.Contains("REFERENCE") || line.Contains("DRAWINGS") ||
-                    line.Contains(".dwg") || line.Contains("="))
+                    line.Contains(".dwg") || line.Contains("i 2 3 4 5 6"))
                     continue;
 
                 // Look for table rows with pipe separators
@@ -448,23 +448,25 @@ namespace RTUPointlistParse
                         .Where(c => !string.IsNullOrWhiteSpace(c))
                         .ToList();
 
-                    // Filter out header rows (rows that don't start with a number or have common header text)
+                    // Filter out obvious header rows
                     if (columns.Count > 0)
                     {
                         var firstCol = columns[0].Trim();
+                        var lineUpper = line.ToUpper();
                         
-                        // Skip rows that are clearly headers
-                        if (firstCol.Contains("Noe") || firstCol.Contains("POINT NAME") ||
-                            firstCol.Contains("DEC") || firstCol.Contains("STATE") ||
-                            firstCol.Contains("EMS") || firstCol.Contains("STAT") ||
-                            firstCol.Contains("INPUT") || firstCol.Contains("rte") ||
-                            firstCol.Contains("NOTE") || firstCol.Contains("cont") ||
-                            string.IsNullOrWhiteSpace(firstCol))
+                        // Skip rows that are clearly column headers or labels
+                        if (lineUpper.Contains("NUMBER") && lineUpper.Contains("POINT NAME") && lineUpper.Contains("CONT"))
+                            continue;
+                        if (lineUpper.Contains("EMS") && lineUpper.Contains("STAT") && lineUpper.Contains("INPUT") && lineUpper.Contains("CTRL"))
+                            continue;
+                        if (lineUpper.Contains("DEC") && lineUpper.Contains("STATE") && lineUpper.Contains("DSCR"))
+                            continue;
+                        if (firstCol.Equals("Noe", StringComparison.OrdinalIgnoreCase) || 
+                            firstCol.Equals("rte", StringComparison.OrdinalIgnoreCase))
                             continue;
 
-                        // Accept rows that start with a number (data rows) or have substantial content
-                        if (int.TryParse(firstCol, out _) || 
-                            (columns.Count > 2 && columns.Any(c => c.Length > 3)))
+                        // Accept rows with at least 2 columns  
+                        if (columns.Count >= 2)
                         {
                             rows.Add(new TableRow { Columns = columns });
                         }
