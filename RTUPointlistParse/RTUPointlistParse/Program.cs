@@ -10,6 +10,14 @@ namespace RTUPointlistParse
         private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
         private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
+        // Constants for table parsing
+        private const int MinSplitPosition = 50;  // Minimum character position for second row split point
+        
+        // Drawing numbers to filter out (metadata in PDFs)
+        private static readonly string[] DrawingNumbersToFilter = {
+            "5640067", "5640066", "5640065", "5640064", "585409"
+        };
+
         public static void Main(string[] args)
         {
             // Parse command-line arguments
@@ -455,11 +463,7 @@ namespace RTUPointlistParse
                     trimmedLine.StartsWith("red") ||
                     trimmedLine.StartsWith("F Z") ||
                     trimmedLine.StartsWith("——|") ||
-                    trimmedLine.Contains("5640067") ||
-                    trimmedLine.Contains("5640066") ||
-                    trimmedLine.Contains("5640065") ||
-                    trimmedLine.Contains("5640064") ||
-                    trimmedLine.Contains("585409") ||
+                    DrawingNumbersToFilter.Any(d => trimmedLine.Contains(d)) ||
                     !trimmedLine.Contains("|"))
                     continue;
 
@@ -483,12 +487,14 @@ namespace RTUPointlistParse
             // Pattern: ... | ... stuff ... SPACE+ NUMBER SPACE* | NAME | ...
             // We need to find where the second row starts
             
-            // Look for a pattern where we have whitespace, then 1-3 digits, then optional chars, then a pipe
-            // This indicates the start of the second row
+            // Regex pattern: Matches whitespace followed by 1-3 digits (row index),
+            // optional underscores/spaces, then a pipe character.
+            // This indicates the start of the second table row in a side-by-side layout.
             var pattern = @"\s+(\d{1,3}[_\s]*)\|";
             var match = System.Text.RegularExpressions.Regex.Match(line, pattern);
             
-            if (match.Success && match.Index > 50)  // Only if it's far enough into the line (not the first row)
+            // Only split if the match is far enough into the line (not the first row index)
+            if (match.Success && match.Index > MinSplitPosition)
             {
                 // Split the line at this point
                 var splitPos = match.Index;
