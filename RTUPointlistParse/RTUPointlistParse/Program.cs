@@ -437,6 +437,7 @@ namespace RTUPointlistParse
         /// <summary>
         /// Parse table data from extracted PDF text into structured rows for Status sheet
         /// Extracts only Point Number and Point Name columns
+        /// OCR output has dual-column format with two tables side-by-side
         /// </summary>
         public static List<TableRow> ParseStatusTable(string pdfText)
         {
@@ -458,19 +459,9 @@ namespace RTUPointlistParse
                 // Check if this looks like a data row (starts with number followed by | or [)
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
-                    // Parse this as a status data row - extract only Point Number and Point Name
-                    var parsedRow = ParseSimpleDataRow(trimmedLine, pointNumber);
-                    if (parsedRow != null)
-                    {
-                        string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                        
-                        // Filter out empty rows and rows where Point Name contains "Spare"
-                        if (IsValidPointName(pointName))
-                        {
-                            rows.Add(parsedRow);
-                            pointNumber++;
-                        }
-                    }
+                    // Parse this as a status data row - extract from BOTH columns (left and right)
+                    var parsedRows = ParseSimpleDataRowDualColumn(trimmedLine, ref pointNumber);
+                    rows.AddRange(parsedRows);
                 }
             }
 
@@ -480,6 +471,7 @@ namespace RTUPointlistParse
         /// <summary>
         /// Parse table data from extracted PDF text into structured rows for Analog sheet
         /// Extracts only Point Number and Point Name columns
+        /// OCR output has dual-column format with two tables side-by-side
         /// </summary>
         public static List<TableRow> ParseAnalogTable(string pdfText)
         {
@@ -501,19 +493,9 @@ namespace RTUPointlistParse
                 // Check if this looks like a data row
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
-                    // Parse this as an analog data row - extract only Point Number and Point Name
-                    var parsedRow = ParseSimpleDataRow(trimmedLine, pointNumber);
-                    if (parsedRow != null)
-                    {
-                        string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                        
-                        // Filter out empty rows and rows where Point Name contains "Spare"
-                        if (IsValidPointName(pointName))
-                        {
-                            rows.Add(parsedRow);
-                            pointNumber++;
-                        }
-                    }
+                    // Parse this as an analog data row - extract from BOTH columns (left and right)
+                    var parsedRows = ParseSimpleDataRowDualColumn(trimmedLine, ref pointNumber);
+                    rows.AddRange(parsedRows);
                 }
             }
 
@@ -575,6 +557,121 @@ namespace RTUPointlistParse
 
         /// <summary>
         /// Parse a data row from OCR text extracting only Point Number and Point Name
+        /// OCR output has dual-column format: each line contains TWO table entries (left and right)
+        /// </summary>
+        private static List<TableRow> ParseSimpleDataRowDualColumn(string line, ref int pointNumber)
+        {
+            var result = new List<TableRow>();
+            
+            try
+            {
+                // Each OCR line contains TWO tables side by side
+                // Strategy: Find ALL entries in the line that match the pattern "DEC# | POINT_NAME"
+                // and extract point names from each
+                
+                // Split line by common separators between columns: sequences of =, _, —, or spaces followed by a DEC number
+                // This regex splits on patterns like "= 82 |" or "_ 85 |"
+                var splitPattern = new System.Text.RegularExpressions.Regex(@"([=_\s—]{2,})(\d{2,3})\s*[|\[]");
+                
+                // Find all split positions
+                var splitMatches = splitPattern.Matches(line);
+                
+                // Extract entries: start of line, and after each split point
+                var entries = new List<string>();
+                
+                int lastEnd = 0;
+                foreach (System.Text.RegularExpressions.Match splitMatch in splitMatches)
+                {
+                    // Extract from last position to this split
+                    string entry = line.Substring(lastEnd, splitMatch.Index - lastEnd + splitMatch.Length);
+                    if (!string.IsNullOrWhiteSpace(entry))
+                    {
+                        entries.Add(entry);
+                    }
+                    lastEnd = splitMatch.Index + splitMatch.Length;
+                }
+                
+                // Don't forget the last part after the final split
+                if (lastEnd < line.Length)
+                {
+                    string lastEntry = line.Substring(lastEnd);
+                    if (!string.IsNullOrWhiteSpace(lastEntry))
+                    {
+                        entries.Add(lastEntry);
+                    }
+                }
+                
+                // If no splits found, treat entire line as one entry
+                if (entries.Count == 0)
+                {
+                    entries.Add(line);
+                }
+                
+                // Parse each entry
+                foreach (var entry in entries)
+                {
+                    var row = ParseSingleColumnEntry(entry, pointNumber);
+                    if (row != null)
+                    {
+                        result.Add(row);
+                        pointNumber++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Warning: Failed to parse row: {ex.Message}");
+            }
+            
+            return result;
+        }
+        
+        /// <summary>
+        /// Parse a single column entry (either left or right from a dual-column line)
+        /// </summary>
+        private static TableRow? ParseSingleColumnEntry(string text, int pointNumber)
+        {
+            try
+            {
+                // Pattern: NUMBER | POINT_NAME ...
+                var match = IndexExtractionPattern.Match(text);
+                if (!match.Success)
+                    return null;
+
+                string remainder = match.Groups[2].Value;
+
+                // Split by | to separate sections
+                var sections = remainder.Split('|');
+                if (sections.Length < 1)
+                    return null;
+
+                // First section contains the point name
+                string firstSection = sections[0].Trim();
+
+                // Extract point name (everything before certain keywords)
+                string pointName = ExtractPointName(firstSection);
+                
+                if (string.IsNullOrWhiteSpace(pointName) || !IsValidPointName(pointName))
+                    return null;
+
+                // Build the row with only Point Number and Point Name
+                var columns = new List<string>
+                {
+                    pointNumber.ToString(),  // Point Number
+                    pointName                // Point Name
+                };
+
+                return new TableRow { Columns = columns };
+            }
+            catch (Exception ex)
+            {
+                // Silently fail for invalid entries
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Parse a data row from OCR text extracting only Point Number and Point Name (single entry)
         /// </summary>
         private static TableRow? ParseSimpleDataRow(string line, int pointNumber)
         {
@@ -732,19 +829,24 @@ namespace RTUPointlistParse
         {
             // Point names typically come first, before control info or state info
             // Common patterns: "NAME 115KV CB", "NAME SWITCH", etc.
-            // Stop at: numbers followed by state keywords, certain characters like [, (
+            // Stop at: TAB numbers, state keywords, control markers
 
             var tokens = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             var nameTokens = new List<string>();
+            bool hitDigit = false;
 
             foreach (var token in tokens)
             {
                 // Stop collecting if we hit state keywords or control markers
                 if (token == "CLOSE" || token == "OPEN" || token == "NORMAL" || token == "ALARM" ||
                     token == "AUTO" || token == "SOLID" || token == "MANUAL" || token == "auto" ||
-                    token.Contains("95-") || token.Contains("/AT") || token == "[or" || token == "[ot" ||
-                    token == "[pI" || token == "[oI" || token == "[dI" || token == "DI" || token.Contains("RK") ||
-                    token == "[" || token == "]" || token == "=" || token == "—")
+                    token.Contains("95-") || token.Contains("/AT") || token.Contains("RK") ||
+                    token == "[or" || token == "[ot" || token == "[pI" || token == "[oI" || token == "[dI" ||
+                    token.StartsWith("DI") || token.StartsWith("RM") ||
+                    token == "[" || token == "]" || token == "=" || token == "—" || token == "F" ||
+                    token.StartsWith("1A") || token.StartsWith("1B") || token.StartsWith("1C") ||
+                    token.StartsWith("1D") || token.StartsWith("1E") || token.StartsWith("1F") ||
+                    token == "I}" || token == "F———-~" || token == "Tn" || token.StartsWith("[f"))
                 {
                     break;
                 }
@@ -758,18 +860,27 @@ namespace RTUPointlistParse
                     continue;
                 }
 
-                // Skip tokens that are just numbers (unless part of a name like "NO. 1")
-                if (int.TryParse(cleaned, out _) && !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
+                // Check if this is a TAB index (single or double digit number after we've collected some tokens)
+                if (nameTokens.Count >= 2 && int.TryParse(cleaned, out int num) && num >= 0 && num <= 300)
                 {
-                    // Allow small numbers that might be part of names
-                    if (cleaned.Length <= 2)
+                    // If we haven't hit a digit yet and this is a very small number, it's likely part of the name (like "NO. 1")
+                    if (!hitDigit && num <= 10 && nameTokens.Count < 5)
+                    {
                         nameTokens.Add(cleaned);
-                    break;  // Stop after first standalone number
+                        hitDigit = true;
+                        continue;
+                    }
+                    // Otherwise, this is the TAB index, stop here
+                    break;
                 }
 
-                nameTokens.Add(cleaned);
+                // Add valid tokens
+                if (cleaned != "|" && !cleaned.StartsWith("[") && !cleaned.EndsWith("}"))
+                {
+                    nameTokens.Add(cleaned);
+                }
 
-                // Stop after collecting enough tokens (point names are usually 2-6 words)
+                // Stop after collecting enough tokens (point names are usually 2-8 words)
                 if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
                     break;
             }
@@ -779,6 +890,10 @@ namespace RTUPointlistParse
             // Final cleanup
             result = result.Replace("  ", " ");  // Remove double spaces
             result = WhitespaceNormalizePattern.Replace(result, " ");  // Normalize whitespace
+            
+            // Remove trailing OCR artifacts
+            result = result.TrimEnd('F', 'I', 'J', '|', '[', ']', '(', ')');
+            result = result.Replace("||", "").Replace("}{", "").Trim();
             
             return result;
         }
