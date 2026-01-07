@@ -11,6 +11,11 @@ namespace RTUPointlistParse
         private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
         private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
+        // Constants for point extraction
+        private const int MAX_VALID_POINT_NUMBER = 500;  // Point numbers above this are likely reference/document numbers
+        private const int MAX_INLINE_NUMBER_THRESHOLD = 100;  // Numbers above this in point names are likely metadata
+        private const int MAX_POINT_NAME_TOKENS = 15;  // Maximum tokens to collect for point names
+
         // Regex pattern to match data rows starting with a number
         private static readonly Regex DataRowPattern = new Regex(@"^\s*(\d+)\s*[|\[](.+)", RegexOptions.Compiled);
 
@@ -162,8 +167,20 @@ namespace RTUPointlistParse
                 process.WaitForExit();
                 return process.ExitCode == 0 || process.ExitCode == 1;
             }
-            catch
+            catch (System.ComponentModel.Win32Exception)
             {
+                // Tool not found in PATH (common on Windows)
+                return false;
+            }
+            catch (FileNotFoundException)
+            {
+                // Tool executable not found
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // Log unexpected errors but return false to indicate tool is not available
+                Console.WriteLine($"  Warning: Unexpected error checking for {toolName}: {ex.Message}");
                 return false;
             }
         }
@@ -311,7 +328,7 @@ namespace RTUPointlistParse
 
                     // Filter out large numbers (likely reference/document numbers)
                     // Point numbers in the tables are typically small (1-300)
-                    if (pointNumber > 500)
+                    if (pointNumber > MAX_VALID_POINT_NUMBER)
                         continue;
 
                     // Extract point name from the remainder
@@ -394,7 +411,7 @@ namespace RTUPointlistParse
                 }
 
                 // Check if this is a small standalone number (likely part of table structure, not name)
-                if (int.TryParse(cleaned, out int num) && num < 100 && nameTokens.Count > 2)
+                if (int.TryParse(cleaned, out int num) && num < MAX_INLINE_NUMBER_THRESHOLD && nameTokens.Count > 2)
                 {
                     consecutiveSmallNumbers++;
                     // If we see multiple small numbers in a row, stop (likely entering data columns)
@@ -410,7 +427,7 @@ namespace RTUPointlistParse
                 nameTokens.Add(cleaned);
 
                 // Stop after reasonable number of tokens
-                if (nameTokens.Count >= 15)
+                if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
                     break;
             }
 
@@ -455,7 +472,6 @@ namespace RTUPointlistParse
             cleaned = cleaned
                 .Replace("ftnyo", "INYO")
                 .Replace("tnyo", "INYO")
-                .Replace("NYO", "INYO")  // Common OCR error
                 .Replace("GAS7AIR", "GAS/AIR")
                 .Replace("T15KV", "115KV")
                 .Replace("fi1S5KV", "115KV")
@@ -470,12 +486,10 @@ namespace RTUPointlistParse
                 .Replace("CBF", "CB")  // Trailing F artifact
                 .Replace("coso", "COSO");  // Fix lowercase
 
-            // Fix common patterns at start
-            if (cleaned.StartsWith("N") && cleaned.Length > 2 && char.IsUpper(cleaned[1]))
+            // Fix NYO -> INYO (only if it's the complete string or at start)
+            if (cleaned == "NYO" || cleaned.StartsWith("NYO "))
             {
-                // Check if it should be "I" (like NYO -> INYO)
-                if (cleaned.StartsWith("NYO"))
-                    cleaned = "I" + cleaned;
+                cleaned = cleaned.Replace("NYO", "INYO");
             }
 
             return cleaned;
