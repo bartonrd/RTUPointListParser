@@ -1,1288 +1,509 @@
-﻿using UglyToad.PdfPig;
-using ClosedXML.Excel;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Text;
-using System.Diagnostics;
+using ClosedXML.Excel;
+using Docnet.Core;
+using Docnet.Core.Models;
+using Tesseract;
 
 namespace RTUPointlistParse
 {
-    public class Program
+    public record OcrWord(string Text, Rectangle Bounds, float Confidence);
+    public record TableHeader(Rectangle Bounds, int PageIndex, string SourceFile);
+    public record RowCluster(int PageIndex, string SourceFile, int Y, List<OcrWord> Words);
+
+    public class App
     {
-        private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
-        private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+        public const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
+        public const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+        private const int DPI = 300;
+        private const int Y_TOLERANCE = 10;
+        private const int HEADER_X_TOLERANCE = 20;
+        private const int COLUMN_X_TOLERANCE = 15;
+        private const int MAX_VERTICAL_GAP = 50;
 
-        // Constants for data parsing
-        private const string DEFAULT_AOR_VALUE = "43";  // Default Area of Responsibility
-        private const int MAX_POINT_NAME_TOKENS = 10;   // Maximum tokens to collect for point names
-        private const int MAX_CONTROL_ADDRESS = 100;    // Maximum valid control address value
-        private const string DEFAULT_NORMAL_STATE = "1";  // Default normal state value
-        private const int POINT_NAME_COLUMN_INDEX = 2;  // Column index for point name (Status)
-        private const int POINT_NAME_COLUMN_INDEX_ANALOG = 1;  // Column index for point name (Analog)
-        
-        // Constants for two-column layout detection
-        private const int MIN_SECOND_COLUMN_INDEX = 80;  // Minimum row index indicating second column
-        private const int MIN_CHAR_POSITION = 50;        // Minimum character position for second column split
+        private readonly List<string> logLines = new();
 
-        // Cached Regex patterns for better performance
-        private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
-            new System.Text.RegularExpressions.Regex(@"^\d+\s*[|\[]", 
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        private static readonly System.Text.RegularExpressions.Regex IndexExtractionPattern =
-            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[|\[](.+)", 
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        private static readonly System.Text.RegularExpressions.Regex AlarmClassPattern =
-            new System.Text.RegularExpressions.Regex(@"Class\s+(\d+)", 
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        private static readonly System.Text.RegularExpressions.Regex WhitespaceNormalizePattern =
-            new System.Text.RegularExpressions.Regex(@"\s+", 
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        private static readonly System.Text.RegularExpressions.Regex TwoColumnSplitPattern =
-            new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        private static readonly System.Text.RegularExpressions.Regex TrailingSingleLetterPattern =
-            new System.Text.RegularExpressions.Regex(@"\s+[A-Z]$",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-        
-        // OCR artifact patterns
-        private static readonly HashSet<string> OcrNoisePatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "I", "F", "J", "L", "—", "=", "DI", "or"
-        };
-        private static readonly char[] LeadingOcrArtifacts = new[] { 'l', 'f', 'I' };
-
-        public static void Main(string[] args)
-        {
-            // Parse command-line arguments
-            string inputFolder = args.Length > 0 ? args[0] : DefaultInputFolder;
-            string outputFolder = args.Length > 1 ? args[1] : DefaultOutputFolder;
-
-            Console.WriteLine("RTU Point List Parser");
-            Console.WriteLine("=====================");
-            Console.WriteLine($"Input folder: {inputFolder}");
-            Console.WriteLine($"Output folder: {outputFolder}");
-            Console.WriteLine();
-
-            // Validate input folder exists
-            if (!Directory.Exists(inputFolder))
-            {
-                Console.WriteLine($"Error: Input folder does not exist: {inputFolder}");
-                return;
-            }
-
-            // Create output folder if it doesn't exist
-            if (!Directory.Exists(outputFolder))
-            {
-                Directory.CreateDirectory(outputFolder);
-                Console.WriteLine($"Created output folder: {outputFolder}");
-            }
-
-            // Enumerate all PDF files in the input folder
-            var pdfFiles = Directory.GetFiles(inputFolder, "*.pdf");
-            Console.WriteLine($"Found {pdfFiles.Length} PDF file(s) to process");
-            Console.WriteLine();
-
-            if (pdfFiles.Length == 0)
-            {
-                Console.WriteLine("No PDF files found in the input folder.");
-                return;
-            }
-
-            // Collect all table rows from all PDFs
-            // Note: In a real implementation with text-based PDFs, you would need to:
-            // 1. Distinguish between Status and Analog data based on content or filename
-            // 2. Parse different table structures for each type
-            // For image-based PDFs (like the current example), this will result in empty collections
-            var allStatusRows = new List<TableRow>();
-            var allAnalogRows = new List<TableRow>();
-
-            // Process each PDF file
-            foreach (var pdfFile in pdfFiles)
-            {
-                try
-                {
-                    Console.WriteLine($"Processing: {Path.GetFileName(pdfFile)}");
-                    
-                    // Extract text from PDF
-                    string pdfText = ExtractTextFromPdf(pdfFile);
-                    
-                    if (string.IsNullOrWhiteSpace(pdfText))
-                    {
-                        Console.WriteLine($"  Warning: No text extracted from PDF. The PDF may be image-based.");
-                    }
-                    else
-                    {
-                        // Determine type based on filename
-                        string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
-                        
-                        if (fileName.Contains("sh1") || fileName.Contains("status"))
-                        {
-                            // Parse as Status data
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
-                        }
-                        else if (fileName.Contains("sh2") || fileName.Contains("analog"))
-                        {
-                            // Parse as Analog data
-                            var tableRows = ParseAnalogTable(pdfText);
-                            allAnalogRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
-                        }
-                        else
-                        {
-                            // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"  Error processing {Path.GetFileName(pdfFile)}: {ex.Message}");
-                }
-            }
-
-            // Generate a single combined Excel file
-            // Use a generic name or derive from folder/first file
-            string outputFileName = "Control_rtu837_DNP_pointlist_rev00.xlsx";
-            string outputPath = Path.Combine(outputFolder, outputFileName);
-            
-            Console.WriteLine();
-            Console.WriteLine($"Generating combined Excel file: {outputFileName}");
-            GenerateExcel(allStatusRows, allAnalogRows, outputPath);
-            Console.WriteLine($"  Generated: {outputFileName}");
-
-            // Compare generated files with expected output if available
-            string expectedOutputFolder = Path.Combine(
-                Path.GetDirectoryName(inputFolder) ?? "",
-                "Expected Output"
-            );
-
-            if (Directory.Exists(expectedOutputFolder))
-            {
-                Console.WriteLine();
-                Console.WriteLine("Comparing with expected output...");
-                Console.WriteLine("=================================");
-                CompareOutputFiles(outputFolder, expectedOutputFolder);
-            }
-
-            Console.WriteLine();
-            Console.WriteLine("Processing complete.");
-        }
-
-        /// <summary>
-        /// Extract text content from a PDF file, using OCR if necessary
-        /// </summary>
-        public static string ExtractTextFromPdf(string filePath)
-        {
-            var sb = new StringBuilder();
-
-            try
-            {
-                // First, try direct text extraction using PdfPig
-                using (var document = PdfDocument.Open(filePath))
-                {
-                    foreach (var page in document.GetPages())
-                    {
-                        sb.AppendLine(page.Text);
-                    }
-                }
-
-                // If no text was extracted, try OCR
-                if (string.IsNullOrWhiteSpace(sb.ToString()))
-                {
-                    Console.WriteLine($"  No text found, attempting OCR...");
-                    var ocrText = ExtractTextFromPdfWithOcr(filePath);
-                    sb.Clear();
-                    sb.Append(ocrText);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Error extracting text: {ex.Message}");
-            }
-
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Check if a command-line tool is available in the system PATH
-        /// </summary>
-        private static bool IsToolAvailable(string toolName)
+        public async Task<int> RunAsync(string inputFolder, string outputFolder, string? tessDataEnvVar, string? tessLangEnvVar)
         {
             try
             {
-                var process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = toolName,
-                        Arguments = "--version",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
-                process.Start();
-                process.WaitForExit();
-                // Both exit code 0 (success) and 1 (some tools like pdftoppm) are acceptable
-                // as they indicate the tool exists and responded
-                return process.ExitCode == 0 || process.ExitCode == 1;
-            }
-            catch (System.ComponentModel.Win32Exception)
-            {
-                // Tool not found in PATH (common on Windows)
-                return false;
-            }
-            catch (FileNotFoundException)
-            {
-                // Tool executable not found
-                return false;
-            }
-            catch (Exception)
-            {
-                // Any other error means tool is not accessible
-                return false;
-            }
-        }
+                Log("RTU Point List Parser - OCR-Based");
+                Log("=====================================");
+                Log($"Input folder: {inputFolder}");
+                Log($"Output folder: {outputFolder}");
+                Log("");
 
-        /// <summary>
-        /// Display detailed diagnostic information for missing tesseract tool
-        /// </summary>
-        private static void DisplayTesseractDiagnostics()
-        {
-            Console.WriteLine("  Diagnostic information:");
-            Console.WriteLine("    - Current PATH variable:");
-            
-            var pathVar = Environment.GetEnvironmentVariable("PATH");
-            if (pathVar != null)
-            {
-                var paths = pathVar.Split(Path.PathSeparator);
-                bool foundTesseract = false;
-                
-                foreach (var path in paths)
+                // Validate input folder
+                if (!Directory.Exists(inputFolder))
                 {
-                    if (path.Contains("Tesseract", StringComparison.OrdinalIgnoreCase))
-                    {
-                        Console.WriteLine($"      Found Tesseract in PATH: {path}");
-                        foundTesseract = true;
-                        
-                        // Check if tesseract.exe exists in this path
-                        var tesseractExe = Path.Combine(path, "tesseract.exe");
-                        if (File.Exists(tesseractExe))
-                        {
-                            Console.WriteLine($"      ✓ tesseract.exe found at: {tesseractExe}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"      ✗ tesseract.exe NOT found at: {tesseractExe}");
-                        }
-                    }
-                }
-                
-                if (!foundTesseract)
-                {
-                    Console.WriteLine("      No Tesseract directory found in PATH");
-                }
-            }
-            
-            // Check common installation locations on Windows
-            if (OperatingSystem.IsWindows())
-            {
-                Console.WriteLine("    - Checking common installation locations:");
-                var commonPaths = new[]
-                {
-                    @"C:\Program Files\Tesseract-OCR\tesseract.exe",
-                    @"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-                    @"C:\Tesseract-OCR\tesseract.exe"
-                };
-                
-                foreach (var path in commonPaths)
-                {
-                    if (File.Exists(path))
-                    {
-                        Console.WriteLine($"      ✓ Found tesseract.exe at: {path}");
-                        Console.WriteLine("      → You may need to restart your terminal/IDE for PATH changes to take effect");
-                        Console.WriteLine("      → Or ensure the directory is in PATH, not just the parent directory");
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Extract text from PDF using OCR (for image-based PDFs)
-        /// </summary>
-        private static string ExtractTextFromPdfWithOcr(string pdfPath)
-        {
-            try
-            {
-                Console.WriteLine($"  Performing OCR on PDF...");
-                
-                // Check if required tools are available
-                if (!IsToolAvailable("pdftoppm"))
-                {
-                    Console.WriteLine("  ERROR: 'pdftoppm' not found. OCR requires poppler-utils to be installed.");
-                    Console.WriteLine("  Installation instructions:");
-                    Console.WriteLine("    Windows: Download from https://blog.alivate.com.au/poppler-windows/");
-                    Console.WriteLine("             Extract and add the 'bin' folder to your system PATH");
-                    Console.WriteLine("    Linux:   sudo apt-get install poppler-utils");
-                    Console.WriteLine("    macOS:   brew install poppler");
-                    Console.WriteLine("  ");
-                    Console.WriteLine("  TROUBLESHOOTING:");
-                    Console.WriteLine("    - After installing, restart your terminal/IDE/Command Prompt");
-                    Console.WriteLine("    - Verify installation by running: pdftoppm -v");
-                    return string.Empty;
+                    Log($"ERROR: Input folder does not exist: {inputFolder}");
+                    return 1;
                 }
 
-                if (!IsToolAvailable("tesseract"))
+                // Create output folder
+                if (!Directory.Exists(outputFolder))
                 {
-                    Console.WriteLine("  ERROR: 'tesseract' not found. OCR requires Tesseract OCR to be installed.");
-                    Console.WriteLine("  Installation instructions:");
-                    Console.WriteLine("    Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki");
-                    Console.WriteLine("             Install and ensure it's added to your system PATH");
-                    Console.WriteLine("    Linux:   sudo apt-get install tesseract-ocr");
-                    Console.WriteLine("    macOS:   brew install tesseract");
-                    Console.WriteLine("  ");
-                    Console.WriteLine("  TROUBLESHOOTING:");
-                    Console.WriteLine("    - After installing, restart your terminal/IDE/Command Prompt");
-                    Console.WriteLine("    - Verify installation by running: tesseract --version");
-                    DisplayTesseractDiagnostics();
-                    return string.Empty;
+                    Directory.CreateDirectory(outputFolder);
+                    Log($"Created output folder: {outputFolder}");
                 }
-                
-                // Create a temporary directory for image files
-                string tempDir = Path.Combine(Path.GetTempPath(), $"pdf_ocr_{Guid.NewGuid()}");
-                Directory.CreateDirectory(tempDir);
 
-                try
+                // Get tessdata path and language
+                string? tessDataDir = Environment.GetEnvironmentVariable(tessDataEnvVar ?? "TESSDATA_DIR");
+                string tessLang = Environment.GetEnvironmentVariable(tessLangEnvVar ?? "TESSERACT_LANG") ?? "eng";
+
+                if (string.IsNullOrWhiteSpace(tessDataDir))
                 {
-                    // Convert PDF pages to images using pdftoppm
-                    var ppmProcess = new Process
-                    {
-                        StartInfo = new ProcessStartInfo
-                        {
-                            FileName = "pdftoppm",
-                            Arguments = $"-png \"{pdfPath}\" \"{Path.Combine(tempDir, "page")}\"",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            UseShellExecute = false,
-                            CreateNoWindow = true
-                        }
-                    };
-
-                    ppmProcess.Start();
-                    ppmProcess.WaitForExit();
-
-                    if (ppmProcess.ExitCode != 0)
-                    {
-                        var error = ppmProcess.StandardError.ReadToEnd();
-                        Console.WriteLine($"  Error converting PDF to images: {error}");
-                        return string.Empty;
-                    }
-
-                    // Get all generated image files
-                    var imageFiles = Directory.GetFiles(tempDir, "*.png").OrderBy(f => f).ToArray();
-                    
-                    if (imageFiles.Length == 0)
-                    {
-                        Console.WriteLine($"  No images generated from PDF");
-                        return string.Empty;
-                    }
-
-                    var sb = new StringBuilder();
-
-                    // Perform OCR on each page image
-                    foreach (var imageFile in imageFiles)
-                    {
-                        using (var tessProcess = new Process
-                        {
-                            StartInfo = new ProcessStartInfo
-                            {
-                                FileName = "tesseract",
-                                Arguments = $"\"{imageFile}\" stdout",
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true,
-                                UseShellExecute = false,
-                                CreateNoWindow = true
-                            }
-                        })
-                        {
-                            tessProcess.Start();
-                            
-                            // Read output before waiting to avoid deadlock
-                            var text = tessProcess.StandardOutput.ReadToEnd();
-                            var error = tessProcess.StandardError.ReadToEnd();
-                            
-                            tessProcess.WaitForExit();
-
-                            // Only append text if tesseract succeeded
-                            if (tessProcess.ExitCode == 0)
-                            {
-                                sb.AppendLine(text);
-                            }
-                            else
-                            {
-                                Console.WriteLine($"  Tesseract OCR error on {Path.GetFileName(imageFile)}: {error}");
-                            }
-                        }
-                    }
-
-                    Console.WriteLine($"  OCR completed on {imageFiles.Length} page(s)");
-                    return sb.ToString();
+                    Log("ERROR: TESSDATA_DIR environment variable not set.");
+                    Log("Please set it to the path containing tessdata folder (e.g., C:\\tools\\tesseract\\tessdata)");
+                    return 1;
                 }
-                finally
+
+                if (!Directory.Exists(tessDataDir))
                 {
-                    // Clean up temporary files
+                    Log($"ERROR: Tessdata directory not found: {tessDataDir}");
+                    return 1;
+                }
+
+                string trainedDataPath = Path.Combine(tessDataDir, $"{tessLang}.traineddata");
+                if (!File.Exists(trainedDataPath))
+                {
+                    Log($"ERROR: Trained data file not found: {trainedDataPath}");
+                    Log($"Please ensure {tessLang}.traineddata exists in the tessdata folder.");
+                    return 1;
+                }
+
+                Log($"Tesseract data: {tessDataDir}");
+                Log($"Language: {tessLang}");
+                Log("");
+
+                // Get all PDF files
+                var pdfFiles = GetPdfFiles(inputFolder);
+                Log($"Found {pdfFiles.Count} PDF file(s)");
+
+                if (pdfFiles.Count == 0)
+                {
+                    Log("WARNING: No PDF files found in input folder");
+                    WriteLog(outputFolder, logLines);
+                    return 0;
+                }
+
+                // Collect all extracted rows
+                var allRows = new List<(int PointNumber, string PointName)>();
+
+                // Initialize Tesseract engine (reuse for all pages)
+                using var engine = new TesseractEngine(tessDataDir, tessLang, EngineMode.Default);
+                engine.SetVariable("tessedit_pageseg_mode", "6"); // Assume uniform block of text
+
+                // Process each PDF
+                foreach (var pdfPath in pdfFiles)
+                {
+                    var fileName = Path.GetFileName(pdfPath);
+                    Log($"Processing: {fileName}");
+
                     try
                     {
-                        Directory.Delete(tempDir, true);
+                        var startTime = DateTime.Now;
+                        
+                        // Render PDF to bitmaps
+                        var bitmaps = RenderPdfToBitmaps(pdfPath, DPI, Log);
+                        Log($"  Rendered {bitmaps.Count} page(s) to bitmaps");
+
+                        // Process each page
+                        for (int pageIdx = 0; pageIdx < bitmaps.Count; pageIdx++)
+                        {
+                            using var bitmap = bitmaps[pageIdx];
+                            var pageStartTime = DateTime.Now;
+
+                            // Run OCR
+                            var words = OcrWordsFromBitmap(bitmap, engine);
+                            var elapsed = (DateTime.Now - pageStartTime).TotalSeconds;
+                            Log($"  Page {pageIdx + 1}: OCR extracted {words.Count} words in {elapsed:F2}s");
+
+                            if (words.Count == 0)
+                            {
+                                Log($"  Page {pageIdx + 1}: WARNING: No words extracted");
+                                continue;
+                            }
+
+                            // Detect table headers
+                            var headers = DetectPointNumberHeaders(words);
+                            Log($"  Page {pageIdx + 1}: Detected {headers.Count} 'Point Number' header(s)");
+
+                            if (headers.Count == 0)
+                            {
+                                Log($"  Page {pageIdx + 1}: WARNING: No table headers found");
+                                continue;
+                            }
+
+                            // Extract rows from each header
+                            foreach (var header in headers)
+                            {
+                                var headerCopy = new TableHeader(header.Bounds, pageIdx, fileName);
+                                var rows = ExtractRowsFromHeaders(words, new List<TableHeader> { headerCopy }, Log);
+                                allRows.AddRange(rows);
+                            }
+                        }
+
+                        var totalElapsed = (DateTime.Now - startTime).TotalSeconds;
+                        Log($"  Total processing time: {totalElapsed:F2}s");
+                        Log($"  Extracted {allRows.Count} total rows so far");
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Ignore cleanup errors
+                        Log($"  ERROR processing {fileName}: {ex.Message}");
                     }
+                }
+
+                Log("");
+                Log($"Total rows extracted from all PDFs: {allRows.Count}");
+
+                if (allRows.Count == 0)
+                {
+                    Log("WARNING: No data rows extracted");
+                    WriteLog(outputFolder, logLines);
+                    return 0;
+                }
+
+                // Sort by Point Number
+                var sortedRows = allRows.OrderBy(r => r.PointNumber).ToList();
+                Log($"Sorted {sortedRows.Count} rows by Point Number");
+
+                // Validate sequence
+                var pointNumbers = sortedRows.Select(r => r.PointNumber).ToList();
+                var (duplicates, gaps) = ValidateSequence(pointNumbers);
+
+                Log("");
+                Log("Sequence Validation:");
+                Log($"  Expected range: 1 to {pointNumbers.Max()}");
+                Log($"  Duplicates found: {duplicates.Count}");
+                Log($"  Gaps found: {gaps.Count}");
+
+                if (duplicates.Count > 0)
+                {
+                    Log($"  First 50 duplicates: {string.Join(", ", duplicates.Take(50))}");
+                }
+
+                if (gaps.Count > 0)
+                {
+                    Log($"  First 50 missing numbers: {string.Join(", ", gaps.Take(50))}");
+                }
+
+                // Write Excel output
+                string outputXlsxPath = Path.Combine(outputFolder, "PointList.xlsx");
+                WriteExcel(outputXlsxPath, sortedRows);
+                Log("");
+                Log($"Excel file created: {outputXlsxPath}");
+
+                // Write log file
+                WriteLog(outputFolder, logLines);
+                Log($"Log file created: {Path.Combine(outputFolder, "PointList.log.txt")}");
+
+                Log("");
+                Log("Processing complete.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log($"FATAL ERROR: {ex.Message}");
+                Log($"Stack trace: {ex.StackTrace}");
+                WriteLog(outputFolder, logLines);
+                return 1;
+            }
+        }
+
+        private void Log(string message)
+        {
+            Console.WriteLine(message);
+            logLines.Add(message);
+        }
+
+        public static List<string> GetPdfFiles(string inputFolder)
+        {
+            return Directory.GetFiles(inputFolder, "*.pdf", SearchOption.TopDirectoryOnly).ToList();
+        }
+
+        public static List<Bitmap> RenderPdfToBitmaps(string pdfPath, int dpi, Action<string> log)
+        {
+            var bitmaps = new List<Bitmap>();
+
+            try
+            {
+                using var library = DocLib.Instance;
+                using var docReader = library.GetDocReader(pdfPath, new PageDimensions(dpi, dpi));
+                
+                for (int i = 0; i < docReader.GetPageCount(); i++)
+                {
+                    using var pageReader = docReader.GetPageReader(i);
+                    
+                    // Get page dimensions
+                    int width = pageReader.GetPageWidth();
+                    int height = pageReader.GetPageHeight();
+                    
+                    // Render page as raw bytes (BGRA format)
+                    byte[] bytes = pageReader.GetImage();
+                    
+                    // Create bitmap from raw bytes
+                    var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+                    var bitmapData = bitmap.LockBits(
+                        new Rectangle(0, 0, width, height),
+                        ImageLockMode.WriteOnly,
+                        PixelFormat.Format32bppArgb);
+                    
+                    System.Runtime.InteropServices.Marshal.Copy(bytes, 0, bitmapData.Scan0, bytes.Length);
+                    bitmap.UnlockBits(bitmapData);
+                    
+                    bitmaps.Add(bitmap);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  OCR extraction error: {ex.Message}");
-                return string.Empty;
+                log($"  ERROR rendering PDF: {ex.Message}");
             }
+
+            return bitmaps;
         }
 
-        /// <summary>
-        /// Parse table data from extracted PDF text into structured rows for Status sheet
-        /// Extracts only Point Number and Point Name columns
-        /// </summary>
-        public static List<TableRow> ParseStatusTable(string pdfText)
+        public static List<OcrWord> OcrWordsFromBitmap(Bitmap bmp, TesseractEngine engine)
         {
-            var rows = new List<TableRow>();
-            var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            var words = new List<OcrWord>();
 
-            foreach (var line in lines)
+            try
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
+                // Convert Bitmap to Pix
+                using var pix = BitmapToPix(bmp);
+                using var page = engine.Process(pix);
 
-                var trimmedLine = line.Trim();
+                using var iterator = page.GetIterator();
+                iterator.Begin();
 
-                // Skip metadata and header lines
-                if (IsMetadataOrHeaderLine(trimmedLine))
-                    continue;
-
-                // Split two-column layout if present
-                // PDFs may have two columns side-by-side that OCR reads as one line
-                // Look for pattern like: "... 80 | POINT_NAME ..." which indicates second column start
-                var columnLines = SplitTwoColumnLayout(trimmedLine);
-
-                foreach (var columnLine in columnLines)
+                do
                 {
-                    if (string.IsNullOrWhiteSpace(columnLine))
-                        continue;
-
-                    // Check if this looks like a data row (starts with number followed by | or [)
-                    if (DataRowPattern.IsMatch(columnLine))
+                    if (iterator.TryGetBoundingBox(PageIteratorLevel.Word, out var bounds))
                     {
-                        // Parse this as a status data row - extract only Point Number and Point Name
-                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
-                        if (parsedRow != null)
+                        string text = iterator.GetText(PageIteratorLevel.Word);
+                        float confidence = iterator.GetConfidence(PageIteratorLevel.Word);
+
+                        if (!string.IsNullOrWhiteSpace(text))
                         {
-                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                            
-                            // Filter out empty rows and rows where Point Name contains "Spare"
-                            if (IsValidPointName(pointName))
-                            {
-                                rows.Add(parsedRow);
-                                pointNumber++;
-                            }
+                            var rect = new Rectangle(bounds.X1, bounds.Y1, bounds.Width, bounds.Height);
+                            words.Add(new OcrWord(text.Trim(), rect, confidence));
                         }
                     }
+                } while (iterator.Next(PageIteratorLevel.Word));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ERROR during OCR: {ex.Message}");
+            }
+
+            return words;
+        }
+
+        private static Pix BitmapToPix(Bitmap bitmap)
+        {
+            // Save bitmap to memory stream and load as Pix
+            using var ms = new MemoryStream();
+            bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            ms.Position = 0;
+            return Pix.LoadFromMemory(ms.ToArray());
+        }
+
+        public static List<TableHeader> DetectPointNumberHeaders(List<OcrWord> words)
+        {
+            var headers = new List<TableHeader>();
+
+            // Find all "Point" words
+            var pointWords = words.Where(w => 
+                string.Equals(w.Text, "Point", StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var pointWord in pointWords)
+            {
+                // Find "Number" words below and overlapping horizontally
+                var numberWords = words.Where(w =>
+                    string.Equals(w.Text, "Number", StringComparison.OrdinalIgnoreCase) &&
+                    w.Bounds.Top > pointWord.Bounds.Top &&
+                    w.Bounds.Top < pointWord.Bounds.Top + 100 && // Within reasonable vertical distance
+                    Math.Abs(w.Bounds.Left - pointWord.Bounds.Left) < HEADER_X_TOLERANCE // Horizontally aligned
+                ).ToList();
+
+                foreach (var numberWord in numberWords)
+                {
+                    // Create combined bounding box
+                    int left = Math.Min(pointWord.Bounds.Left, numberWord.Bounds.Left);
+                    int top = pointWord.Bounds.Top;
+                    int right = Math.Max(pointWord.Bounds.Right, numberWord.Bounds.Right);
+                    int bottom = numberWord.Bounds.Bottom;
+                    
+                    var combinedBounds = new Rectangle(left, top, right - left, bottom - top);
+                    headers.Add(new TableHeader(combinedBounds, 0, ""));
                 }
             }
 
-            return rows;
+            return headers;
         }
 
-        /// <summary>
-        /// Parse table data from extracted PDF text into structured rows for Analog sheet
-        /// Extracts only Point Number and Point Name columns
-        /// </summary>
-        public static List<TableRow> ParseAnalogTable(string pdfText)
+        public static IEnumerable<(int PointNumber, string PointName)> ExtractRowsFromHeaders(
+            List<OcrWord> words, List<TableHeader> headers, Action<string> log)
         {
-            var rows = new List<TableRow>();
-            var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            var result = new List<(int PointNumber, string PointName)>();
 
-            foreach (var line in lines)
+            foreach (var header in headers)
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
+                // Cluster words into rows
+                var rowClusters = ClusterWordsIntoRows(words, Y_TOLERANCE);
 
-                var trimmedLine = line.Trim();
+                // Filter rows below the header
+                var dataRows = rowClusters
+                    .Where(rc => rc.Y > header.Bounds.Bottom)
+                    .OrderBy(rc => rc.Y)
+                    .ToList();
 
-                // Skip metadata and header lines
-                if (IsMetadataOrHeaderLine(trimmedLine))
-                    continue;
-
-                // Split two-column layout if present
-                var columnLines = SplitTwoColumnLayout(trimmedLine);
-
-                foreach (var columnLine in columnLines)
+                // Process each row
+                int lastY = header.Bounds.Bottom;
+                foreach (var row in dataRows)
                 {
-                    if (string.IsNullOrWhiteSpace(columnLine))
-                        continue;
-
-                    // Check if this looks like a data row
-                    if (DataRowPattern.IsMatch(columnLine))
-                    {
-                        // Parse this as an analog data row - extract only Point Number and Point Name
-                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
-                        if (parsedRow != null)
-                        {
-                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                            
-                            // Filter out empty rows and rows where Point Name contains "Spare"
-                            if (IsValidPointName(pointName))
-                            {
-                                rows.Add(parsedRow);
-                                pointNumber++;
-                            }
-                        }
-                    }
-                }
-            }
-
-            return rows;
-        }
-
-        /// <summary>
-        /// Backwards compatibility - parse as Status table
-        /// </summary>
-        public static List<TableRow> ParseTable(string pdfText)
-        {
-            return ParseStatusTable(pdfText);
-        }
-
-        /// <summary>
-        /// Split a line that contains two-column layout data into separate column lines
-        /// OCR may read two table columns side-by-side as a single line
-        /// </summary>
-        private static List<string> SplitTwoColumnLayout(string line)
-        {
-            var result = new List<string>();
-            
-            // Look for pattern indicating second column: a number (typically 80-300) followed by [_|] that appears mid-line
-            var matches = TwoColumnSplitPattern.Matches(line);
-            
-            if (matches.Count == 0)
-            {
-                // No second column detected, return original line
-                result.Add(line);
-                return result;
-            }
-            
-            // Find the best split point - look for indices >= MIN_SECOND_COLUMN_INDEX which typically indicate second column
-            int bestSplitIndex = -1;
-            foreach (System.Text.RegularExpressions.Match match in matches)
-            {
-                if (int.TryParse(match.Groups[1].Value, out int rowIndex))
-                {
-                    // Second column typically starts at index >= MIN_SECOND_COLUMN_INDEX
-                    if (rowIndex >= MIN_SECOND_COLUMN_INDEX && match.Index > MIN_CHAR_POSITION)
-                    {
-                        bestSplitIndex = match.Index;
+                    // Stop if there's a large vertical gap (indicates end of table)
+                    if (row.Y - lastY > MAX_VERTICAL_GAP)
                         break;
-                    }
+
+                    lastY = row.Y;
+
+                    // Find Point Number in this row (numeric word within header x-range)
+                    var pointNumberWord = row.Words
+                        .Where(w => int.TryParse(w.Text, out _))
+                        .Where(w => Math.Abs(w.Bounds.Left - header.Bounds.Left) < COLUMN_X_TOLERANCE * 2)
+                        .FirstOrDefault();
+
+                    if (pointNumberWord == null)
+                        continue;
+
+                    if (!int.TryParse(pointNumberWord.Text, out int pointNumber))
+                        continue;
+
+                    // Find Point Name (all words to the right of Point Number)
+                    var nameWords = row.Words
+                        .Where(w => w.Bounds.Left > pointNumberWord.Bounds.Right)
+                        .OrderBy(w => w.Bounds.Left)
+                        .ToList();
+
+                    if (nameWords.Count == 0)
+                        continue;
+
+                    string pointName = NormalizeText(string.Join(" ", nameWords.Select(w => w.Text)));
+
+                    if (string.IsNullOrWhiteSpace(pointName) || pointName.Length <= 2)
+                        continue;
+
+                    result.Add((pointNumber, pointName));
                 }
             }
-            
-            if (bestSplitIndex > 0)
-            {
-                // Split at this point
-                string leftColumn = line.Substring(0, bestSplitIndex).Trim();
-                string rightColumn = line.Substring(bestSplitIndex).Trim();
-                
-                if (!string.IsNullOrWhiteSpace(leftColumn))
-                    result.Add(leftColumn);
-                if (!string.IsNullOrWhiteSpace(rightColumn))
-                    result.Add(rightColumn);
-            }
-            else
-            {
-                // No valid split point found, return original
-                result.Add(line);
-            }
-            
+
             return result;
         }
 
-        /// <summary>
-        /// Check if a point name is valid (not empty and does not contain "Spare")
-        /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
-        /// </summary>
-        /// <param name="pointName">The point name to validate</param>
-        /// <returns>True if the point name is valid, false otherwise</returns>
-        private static bool IsValidPointName(string pointName)
+        public static IEnumerable<RowCluster> ClusterWordsIntoRows(List<OcrWord> words, int yTolerance)
         {
-            if (string.IsNullOrWhiteSpace(pointName))
-                return false;
+            var clusters = new List<RowCluster>();
+
+            // Group words by approximate Y coordinate (center)
+            var grouped = words
+                .GroupBy(w => (w.Bounds.Top + w.Bounds.Height / 2) / yTolerance)
+                .OrderBy(g => g.Key);
+
+            foreach (var group in grouped)
+            {
+                int avgY = (int)group.Average(w => w.Bounds.Top + w.Bounds.Height / 2);
+                var wordsInRow = group.ToList();
+                clusters.Add(new RowCluster(0, "", avgY, wordsInRow));
+            }
+
+            return clusters;
+        }
+
+        public static string NormalizeText(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s))
+                return "";
+
+            // Trim and collapse multiple spaces
+            s = s.Trim();
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ");
+            return s;
+        }
+
+        public static (List<int> duplicates, List<int> gaps) ValidateSequence(IEnumerable<int> nums)
+        {
+            var duplicates = new List<int>();
+            var gaps = new List<int>();
+
+            var numList = nums.ToList();
+            if (numList.Count == 0)
+                return (duplicates, gaps);
+
+            // Find duplicates
+            var seen = new HashSet<int>();
+            foreach (var num in numList)
+            {
+                if (!seen.Add(num))
+                    duplicates.Add(num);
+            }
+
+            // Find gaps
+            int maxNum = numList.Max();
+            var uniqueNums = new HashSet<int>(numList);
             
-            // Filter out SPARE
-            if (pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase))
-                return false;
-            
-            // Filter out single characters or very short OCR artifacts
-            if (pointName.Length <= 2)
-                return false;
-            
-            // Filter out common OCR noise patterns
-            if (pointName == "I" || pointName == "F" || pointName == "J" || pointName == "L" ||
-                pointName == "—" || pointName == "=" || pointName == "DI" || pointName == "or")
-                return false;
-            
-            // Filter out reference/metadata lines
-            if (pointName.Contains("LISTING") || pointName.Contains("CONSTRUCTION") || 
-                pointName.Contains("ADDED POINT") || pointName.Contains("SYSTEM") ||
-                pointName.Contains("REFERENCE") || pointName.Contains("SAP") ||
-                pointName.Contains("PLOT BY") || pointName.StartsWith("RESERVED FOR"))
-                return false;
-            
-            return true;
+            for (int i = 1; i <= maxNum; i++)
+            {
+                if (!uniqueNums.Contains(i))
+                    gaps.Add(i);
+            }
+
+            return (duplicates.Distinct().ToList(), gaps);
         }
 
-        /// <summary>
-        /// Check if a line is metadata or header (should be skipped)
-        /// </summary>
-        private static bool IsMetadataOrHeaderLine(string line)
+        public static void WriteExcel(string outputXlsxPath, IEnumerable<(int PointNumber, string PointName)> rows)
         {
-            // Skip lines that are clearly metadata
-            if (line.Contains("PLOT BY:") || line.Contains("_PROJECTS\\") ||
-                line.Contains(".dwg") || line.Contains("DIAG") ||
-                line.StartsWith("i ") || line.StartsWith("a ") ||
-                (line.Contains("—") && line.Length < 20) ||
-                (line.Contains("NOTE") && line.Contains("ADDED POINT")))
-            {
-                return true;
-            }
+            using var workbook = new XLWorkbook();
+            var worksheet = workbook.Worksheets.Add("Points");
 
-            // Skip header rows (contain mostly column titles without data)
-            if ((line.Contains("POINT NAME") && line.Contains("STATE")) ||
-                (line.Contains("DEC") && line.Contains("DSCRPT")) ||
-                (line.Contains("COEFFICIENT") && line.Contains("OFFSET")) ||
-                line.Contains("INTERPOSNG") || line.Contains("RELAY NO."))
-            {
-                return true;
-            }
-
-            // Skip lines that are just separators or very short
-            if (line.Length < 10 || line.All(c => char.IsWhiteSpace(c) || c == '—' || c == '=' || c == '|'))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Parse a data row from OCR text extracting only Point Number and Point Name
-        /// </summary>
-        private static TableRow? ParseSimpleDataRow(string line, int pointNumber)
-        {
-            try
-            {
-                // Pattern: NUMBER | POINT_NAME ... 
-                var match = IndexExtractionPattern.Match(line);
-                if (!match.Success)
-                    return null;
-
-                string remainder = match.Groups[2].Value;
-
-                // Split by | to separate sections
-                var sections = remainder.Split('|');
-                if (sections.Length < 1)
-                    return null;
-
-                // First section contains the point name
-                string firstSection = sections[0].Trim();
-
-                // Extract point name (everything before certain keywords)
-                string pointName = ExtractPointName(firstSection);
-                if (string.IsNullOrWhiteSpace(pointName))
-                    return null;
-
-                // Build the row with only Point Number and Point Name
-                var columns = new List<string>
-                {
-                    pointNumber.ToString(),  // Point Number
-                    pointName                // Point Name
-                };
-
-                return new TableRow { Columns = columns };
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Warning: Failed to parse row: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Parse a Status data row from OCR text
-        /// Expected columns: TAB, CONTROL_ADDR, POINT_NAME, NORMAL_STATE, 1_STATE, 0_STATE, AOR, DOG_1, DOG_2, EMS_TP, VOLTAGE_BASE, ...
-        /// </summary>
-        private static TableRow? ParseStatusDataRow(string line, int tabIndex)
-        {
-            try
-            {
-                // Pattern: NUMBER | POINT_NAME ... CONTROL_INFO ... NORMAL_STATE | STATE ... 
-                var match = IndexExtractionPattern.Match(line);
-                if (!match.Success)
-                    return null;
-
-                string remainder = match.Groups[2].Value;
-
-                // Split by | to separate sections
-                var sections = remainder.Split('|');
-                if (sections.Length < 2)
-                    return null;
-
-                // First section contains: POINT_NAME and possibly control address and state info
-                string firstSection = sections[0].Trim();
-                string secondSection = sections.Length > 1 ? sections[1].Trim() : "";
-
-                // Extract point name (everything before certain keywords or numbers pattern)
-                string pointName = ExtractPointName(firstSection);
-                if (string.IsNullOrWhiteSpace(pointName))
-                    return null;
-
-                // Try to extract control address (small number after point name)
-                string controlAddr = ExtractControlAddress(firstSection, pointName);
-
-                // Extract state information (NORMAL_STATE, 1_STATE, 0_STATE)
-                var (normalState, state1, state0) = ExtractStateInfo(firstSection, secondSection);
-
-                // Build the row with available data
-                var columns = new List<string>
-                {
-                    tabIndex.ToString(),           // TAB DEC DNP INDEX
-                    controlAddr,                    // CONTROL ADDRESS
-                    pointName,                      // POINT NAME
-                    normalState,                    // NORMAL STATE
-                    state1,                         // 1_STATE
-                    state0,                         // 0_STATE
-                    DEFAULT_AOR_VALUE,              // AOR (default)
-                    ExtractAlarmClass(line, 1),    // DOG_1
-                    ExtractAlarmClass(line, 2),    // DOG_2
-                    "",                            // EMS TP NUMBER (not readily available)
-                    ExtractVoltage(pointName)       // VOLTAGE BASE
-                };
-
-                return new TableRow { Columns = columns };
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Warning: Failed to parse status row: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Parse an Analog data row from OCR text
-        /// Expected columns: TAB, POINT_NAME, COEFFICIENT, OFFSET, VALUE, UNIT, LOW_LIMIT, HIGH_LIMIT, AOR, DOG_1, DOG_2, ...
-        /// </summary>
-        private static TableRow? ParseAnalogDataRow(string line, int tabIndex)
-        {
-            try
-            {
-                var match = IndexExtractionPattern.Match(line);
-                if (!match.Success)
-                    return null;
-
-                string remainder = match.Groups[2].Value;
-                var sections = remainder.Split('|');
-                if (sections.Length < 1)
-                    return null;
-
-                string firstSection = sections[0].Trim();
-
-                // Extract point name
-                string pointName = ExtractPointName(firstSection);
-                if (string.IsNullOrWhiteSpace(pointName))
-                    return null;
-
-                // Build the row with available data (many fields will be empty for OCR data)
-                var columns = new List<string>
-                {
-                    tabIndex.ToString(),    // TAB DEC DNP INDEX
-                    pointName,              // POINT NAME
-                    "",                     // COEFFICIENT
-                    "",                     // OFFSET
-                    "",                     // VALUE
-                    "",                     // UNIT
-                    "",                     // LOW LIMIT
-                    "",                     // HIGH LIMIT
-                    DEFAULT_AOR_VALUE,      // AOR (default)
-                    ExtractAlarmClass(line, 1),  // DOG_1
-                    ExtractAlarmClass(line, 2),  // DOG_2
-                };
-
-                return new TableRow { Columns = columns };
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Warning: Failed to parse analog row: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Extract point name from the first part of the line
-        /// </summary>
-        private static string ExtractPointName(string text)
-        {
-            // Point names typically come first, before control info or state info
-            // Common patterns: "NAME 115KV CB", "NAME SWITCH", etc.
-            // Stop at: numbers followed by state keywords, certain characters like [, (
-
-            var tokens = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-            var nameTokens = new List<string>();
-            bool hasSeenMainContent = false;
-            bool justSawNo = false;
-            bool justSawBank = false;
-
-            foreach (var token in tokens)
-            {
-                // Stop collecting if we hit state keywords or control markers
-                if (token == "CLOSE" || token == "OPEN" || token == "NORMAL" || token == "ALARM" ||
-                    token == "AUTO" || token == "SOLID" || token == "MANUAL" || token == "auto" ||
-                    token.Contains("95-") || token.Contains("/AT") || token == "[or" || token == "[ot" ||
-                    token == "[pI" || token == "[oI" || token == "[dI" || token == "DI" || token.Contains("RK") ||
-                    token == "[" || token == "]" || token == "=" || token == "—")
-                {
-                    break;
-                }
-
-                // Clean up OCR artifacts
-                string cleaned = CleanOCRArtifacts(token);
-                
-                // Skip if cleaned token is empty or just punctuation
-                if (string.IsNullOrWhiteSpace(cleaned) || cleaned == "—" || cleaned == "=" || cleaned.Length < 1)
-                {
-                    continue;
-                }
-
-                // Special case: allow numbers after "NO." or "BANK" (e.g., "NO. 1 BANK", "NO. 3 BANK")
-                if (justSawNo || justSawBank)
-                {
-                    if (int.TryParse(cleaned, out int num) && num >= 0 && num <= 10)
-                    {
-                        nameTokens.Add(cleaned);
-                        justSawNo = false;
-                        justSawBank = cleaned == "BANK";
-                        hasSeenMainContent = true;
-                        continue;
-                    }
-                }
-
-                // Skip standalone single-digit or two-digit numbers that appear after we've collected some content
-                if (hasSeenMainContent && int.TryParse(cleaned, out int numVal))
-                {
-                    // If this is a small standalone number and we already have content, stop
-                    if (cleaned.Length <= 2 && numVal < 200)
-                    {
-                        break;
-                    }
-                }
-
-                // Skip tokens that are just numbers (unless part of a name like "NO. 1")
-                if (int.TryParse(cleaned, out _) && !justSawNo && !justSawBank && 
-                    !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
-                {
-                    // Allow small numbers that might be part of names only if we don't have content yet
-                    if (cleaned.Length <= 2 && !hasSeenMainContent)
-                    {
-                        nameTokens.Add(cleaned);
-                        hasSeenMainContent = true;
-                    }
-                    else
-                    {
-                        break;  // Stop at standalone numbers
-                    }
-                }
-                else
-                {
-                    nameTokens.Add(cleaned);
-                    hasSeenMainContent = true;
-                    justSawNo = (cleaned == "NO." || cleaned.EndsWith("NO."));
-                    justSawBank = (cleaned == "BANK");
-                }
-
-                // Stop after collecting enough tokens (point names are usually 2-8 words)
-                if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
-                    break;
-            }
-
-            string result = string.Join(" ", nameTokens).Trim();
-            
-            // Final cleanup
-            result = result.Replace("  ", " ");  // Remove double spaces
-            result = WhitespaceNormalizePattern.Replace(result, " ");  // Normalize whitespace
-            
-            // Remove trailing single letters that are OCR artifacts (like "I", "F", "J")
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+[A-Z]$", "").Trim();
-            
-            return result;
-        }
-
-        /// <summary>
-        /// Clean OCR artifacts from a token
-        /// </summary>
-        private static string CleanOCRArtifacts(string token)
-        {
-            // Common OCR artifacts
-            string cleaned = token
-                .Replace("[f", "")
-                .Replace("||", "")
-                .Replace("|", "")
-                .Replace("[", "")
-                .Replace("]", "")
-                .Replace("(", "")
-                .Replace(")", "")
-                .Replace("{", "")
-                .Replace("}", "")
-                .Replace("_", " ")
-                .Replace("  ", " ")
-                .Trim();
-
-            // Fix common OCR character confusions at the beginning
-            // Remove leading lowercase 'l' or 'f' or 'I' that are likely artifacts
-            while (cleaned.Length > 1 && (cleaned[0] == 'l' || cleaned[0] == 'f' || cleaned[0] == 'I') && 
-                   char.IsUpper(cleaned[1]))
-            {
-                cleaned = cleaned.Substring(1);
-            }
-
-            if (cleaned.StartsWith("/") && cleaned.Length > 1)
-            {
-                // Leading slash is likely an OCR artifact
-                cleaned = cleaned.Substring(1);
-            }
-
-            // Replace common character confusions
-            cleaned = cleaned.Replace("I'", "1 ");
-            cleaned = cleaned.Replace("Il", "11");
-            cleaned = cleaned.Replace("Tn", "11");  // Common OCR confusion
-            cleaned = cleaned.Replace("T15KV", "115KV");  // Specific OCR fix
-            cleaned = cleaned.Replace("FTRANS", "TRANS");  // Remove leading F
-            cleaned = cleaned.Replace("TS5KV", "115KV");  // Another OCR confusion
-            cleaned = cleaned.Replace("IN15KV", "115KV");  // Another variation
-            cleaned = cleaned.Replace("N15KV", "115KV");  // Another variation
-            cleaned = cleaned.Replace("ftnyo", "INYO");  // Specific OCR fix
-            cleaned = cleaned.Replace("WWIXIE", "DIXIE");  // Specific OCR fix
-            cleaned = cleaned.Replace("FINO", "NO");  // Remove leading F
-            cleaned = cleaned.Replace("FNO", "NO");  // Remove leading F
-            cleaned = cleaned.Replace("INO", "NO");  // Remove leading I
-            cleaned = cleaned.Replace("FCASA", "CASA");  // Remove leading F
-            cleaned = cleaned.Replace("ICASA", "CASA");  // Remove leading I
-            cleaned = cleaned.Replace("fi1S", "115");  // OCR confusion
-            cleaned = cleaned.Replace("fF", "");  // Remove OCR artifact
-            cleaned = cleaned.Replace("cD", "CD");  // Fix lowercase
-            cleaned = cleaned.Replace("1155KV", "115KV");  // Fix OCR error
-            cleaned = cleaned.Replace("NYO", "INYO");  // Fix missing I
-            cleaned = cleaned.Replace("GAS7AIR", "GAS/AIR");  // Fix OCR
-            cleaned = cleaned.Replace("CSF", "CS");  // Remove trailing F artifact
-            cleaned = cleaned.Replace("CBF", "CB");  // Remove trailing F artifact
-            
-            return cleaned.Trim();
-        }
-
-        /// <summary>
-        /// Extract control address (small number after point name)
-        /// </summary>
-        private static string ExtractControlAddress(string text, string pointName)
-        {
-            // Control address is typically a small number (0-99) that appears after the point name
-            // and before state keywords
-            try
-            {
-                int startPos = text.IndexOf(pointName);
-                if (startPos < 0)
-                    return "";
-
-                string afterName = text.Substring(startPos + pointName.Length).Trim();
-                var tokens = afterName.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-
-                foreach (var token in tokens.Take(3)) // Check first few tokens after name
-                {
-                    // Look for a small number
-                    if (int.TryParse(token, out int num) && num >= 0 && num < MAX_CONTROL_ADDRESS)
-                    {
-                        return token;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Warning: Failed to extract control address: {ex.Message}");
-            }
-
-            return "";
-        }
-
-        /// <summary>
-        /// Extract state information (NORMAL/ALARM, CLOSE/OPEN, etc.)
-        /// </summary>
-        private static (string normal, string state1, string state0) ExtractStateInfo(string firstSection, string secondSection)
-        {
-            string normalState = DEFAULT_NORMAL_STATE;  // default
-            string state1 = "";
-            string state0 = "";
-
-            // Look for state keywords
-            if (firstSection.Contains("CLOSE") || secondSection.Contains("CLOSE"))
-            {
-                normalState = "1";
-                state1 = "CLOSE";
-                state0 = "OPEN";
-            }
-            else if (firstSection.Contains("OPEN") || secondSection.Contains("OPEN"))
-            {
-                normalState = "0";
-                state1 = "CLOSE";
-                state0 = "OPEN";
-            }
-            else if (firstSection.Contains("NORMAL"))
-            {
-                normalState = "1";
-                state1 = "NORMAL";
-                state0 = "ALARM";
-            }
-            else if (firstSection.Contains("ALARM"))
-            {
-                normalState = "0";
-                state1 = "NORMAL";
-                state0 = "ALARM";
-            }
-            else if (firstSection.Contains("AUTO") || firstSection.Contains("auto"))
-            {
-                normalState = "1";
-                state1 = "AUTO";
-                state0 = "SOLID";
-            }
-
-            return (normalState, state1, state0);
-        }
-
-        /// <summary>
-        /// Extract alarm class (Class 1, Class 2, etc.)
-        /// </summary>
-        private static string ExtractAlarmClass(string line, int classNumber)
-        {
-            // Look for patterns like "Class 1", "Class 2", etc.
-            var match = AlarmClassPattern.Match(line);
-            if (match.Success && classNumber == 1)
-            {
-                return $"Class {match.Groups[1].Value}";
-            }
-
-            // Look for second class if exists
-            var matches = AlarmClassPattern.Matches(line);
-            if (matches.Count >= classNumber)
-            {
-                return $"Class {matches[classNumber - 1].Groups[1].Value}";
-            }
-
-            return "";
-        }
-
-        /// <summary>
-        /// Extract voltage base from point name (115KV, 55KV, 0KV, etc.)
-        /// </summary>
-        private static string ExtractVoltage(string pointName)
-        {
-            if (pointName.Contains("115KV") || pointName.Contains("115 KV"))
-                return "115KV";
-            if (pointName.Contains("55KV") || pointName.Contains("55 KV"))
-                return "55KV";
-            if (pointName.Contains("12KV") || pointName.Contains("12 KV"))
-                return "12KV";
-
-            return "0KV";  // default
-        }
-
-        /// <summary>
-        /// Generate an Excel file from parsed table rows
-        /// </summary>
-        public static void GenerateExcel(List<TableRow> statusRows, List<TableRow> analogRows, string outputPath)
-        {
-            using (var workbook = new XLWorkbook())
-            {
-                // Create Status sheet
-                var statusSheet = workbook.Worksheets.Add("Status");
-                CreateStatusSheet(statusSheet, statusRows);
-
-                // Create Analog sheet
-                var analogSheet = workbook.Worksheets.Add("Analog");
-                CreateAnalogSheet(analogSheet, analogRows);
-
-                workbook.SaveAs(outputPath);
-            }
-        }
-
-        private static void CreateStatusSheet(IXLWorksheet worksheet, List<TableRow> rows)
-        {
-            // Add simple header
+            // Header
             worksheet.Cell(1, 1).Value = "Point Number";
-            worksheet.Cell(1, 1).Style.Font.Bold = true;
             worksheet.Cell(1, 2).Value = "Point Name";
-            worksheet.Cell(1, 2).Style.Font.Bold = true;
+            worksheet.Row(1).Style.Font.Bold = true;
 
-            // Add data rows
-            int currentRow = 2;
-            foreach (var row in rows)
+            // Data
+            int rowNum = 2;
+            foreach (var (pointNumber, pointName) in rows)
             {
-                for (int i = 0; i < Math.Min(row.Columns.Count, 2); i++)
-                {
-                    worksheet.Cell(currentRow, i + 1).Value = row.Columns[i];
-                }
-                currentRow++;
+                worksheet.Cell(rowNum, 1).Value = pointNumber;
+                worksheet.Cell(rowNum, 2).Value = pointName;
+                rowNum++;
             }
+
+            // Auto-fit columns
+            worksheet.Columns().AdjustToContents();
+
+            workbook.SaveAs(outputXlsxPath);
         }
 
-        private static void CreateAnalogSheet(IXLWorksheet worksheet, List<TableRow> rows)
+        public static void WriteLog(string outputFolder, IEnumerable<string> logLines)
         {
-            // Add simple header
-            worksheet.Cell(1, 1).Value = "Point Number";
-            worksheet.Cell(1, 1).Style.Font.Bold = true;
-            worksheet.Cell(1, 2).Value = "Point Name";
-            worksheet.Cell(1, 2).Style.Font.Bold = true;
-
-            // Add data rows
-            int currentRow = 2;
-            foreach (var row in rows)
-            {
-                for (int i = 0; i < Math.Min(row.Columns.Count, 2); i++)
-                {
-                    worksheet.Cell(currentRow, i + 1).Value = row.Columns[i];
-                }
-                currentRow++;
-            }
-        }
-
-        private static void CompareOutputFiles(string generatedFolder, string expectedFolder)
-        {
-            var generatedFiles = Directory.GetFiles(generatedFolder, "*.xlsx");
-
-            foreach (var generatedFile in generatedFiles)
-            {
-                string fileName = Path.GetFileName(generatedFile);
-                string expectedFile = Path.Combine(expectedFolder, fileName);
-
-                if (!File.Exists(expectedFile))
-                {
-                    Console.WriteLine($"{fileName}: No expected output file found for comparison");
-                    continue;
-                }
-
-                bool match = CompareExcelFiles(generatedFile, expectedFile);
-                Console.WriteLine($"{fileName}: {(match ? "Match" : "Differences detected")}");
-            }
-        }
-
-        /// <summary>
-        /// Compare two Excel files and return true if they match
-        /// </summary>
-        public static bool CompareExcelFiles(string generatedFile, string expectedFile)
-        {
-            try
-            {
-                using (var generatedWorkbook = new XLWorkbook(generatedFile))
-                using (var expectedWorkbook = new XLWorkbook(expectedFile))
-                {
-                    // Compare number of worksheets
-                    if (generatedWorkbook.Worksheets.Count != expectedWorkbook.Worksheets.Count)
-                    {
-                        Console.WriteLine($"  - Different number of worksheets");
-                        return false;
-                    }
-
-                    bool allMatch = true;
-
-                    foreach (var expectedSheet in expectedWorkbook.Worksheets)
-                    {
-                        var generatedSheet = generatedWorkbook.Worksheets.FirstOrDefault(w => w.Name == expectedSheet.Name);
-
-                        if (generatedSheet == null)
-                        {
-                            Console.WriteLine($"  - Missing worksheet: {expectedSheet.Name}");
-                            allMatch = false;
-                            continue;
-                        }
-
-                        // Compare used ranges
-                        var expectedRange = expectedSheet.RangeUsed();
-                        var generatedRange = generatedSheet.RangeUsed();
-
-                        if (expectedRange == null && generatedRange == null)
-                            continue;
-
-                        if (expectedRange == null || generatedRange == null)
-                        {
-                            Console.WriteLine($"  - {expectedSheet.Name}: Different data presence");
-                            allMatch = false;
-                            continue;
-                        }
-
-                        // Compare dimensions
-                        if (expectedRange.RowCount() != generatedRange.RowCount() ||
-                            expectedRange.ColumnCount() != generatedRange.ColumnCount())
-                        {
-                            Console.WriteLine($"  - {expectedSheet.Name}: Different dimensions " +
-                                $"(Expected: {expectedRange.RowCount()}x{expectedRange.ColumnCount()}, " +
-                                $"Generated: {generatedRange.RowCount()}x{generatedRange.ColumnCount()})");
-                            allMatch = false;
-                            continue;
-                        }
-
-                        // Sample comparison of cell values (first 20 rows)
-                        int rowsToCheck = Math.Min(20, expectedRange.RowCount());
-                        int colsToCheck = expectedRange.ColumnCount();
-
-                        for (int r = 1; r <= rowsToCheck; r++)
-                        {
-                            for (int c = 1; c <= colsToCheck; c++)
-                            {
-                                var expectedValue = expectedRange.Cell(r, c).GetValue<string>();
-                                var generatedValue = generatedRange.Cell(r, c).GetValue<string>();
-
-                                if (expectedValue != generatedValue)
-                                {
-                                    Console.WriteLine($"  - {expectedSheet.Name}: Cell mismatch at R{r}C{c} " +
-                                        $"(Expected: '{expectedValue}', Generated: '{generatedValue}')");
-                                    allMatch = false;
-                                }
-                            }
-                        }
-                    }
-
-                    return allMatch;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Error comparing files: {ex.Message}");
-                return false;
-            }
+            string logPath = Path.Combine(outputFolder, "PointList.log.txt");
+            File.WriteAllLines(logPath, logLines);
         }
     }
 
-    /// <summary>
-    /// Represents a row of table data with multiple columns
-    /// </summary>
-    public class TableRow
+    public class Program
     {
-        public List<string> Columns { get; set; } = new List<string>();
+        public static async Task<int> Main(string[] args)
+        {
+            var app = new App();
+            return await app.RunAsync(
+                App.DefaultInputFolder,
+                App.DefaultOutputFolder,
+                "TESSDATA_DIR",
+                "TESSERACT_LANG");
+        }
     }
 }
