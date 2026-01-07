@@ -1,14 +1,46 @@
 # RTU Point List Parser
 
-A C# .NET Console Application for parsing RTU point list data from PDF files and generating Excel (.xlsx) output files.
+A C# .NET 8 Windows Console Application for extracting point list data from image-based PDF files using OCR and generating Excel output.
 
-## Features
+## Overview
 
-- **PDF Text Extraction**: Extracts text from PDF files using PdfPig library
-- **Table Parsing**: Converts extracted text into structured table data
-- **Excel Generation**: Creates formatted .xlsx files with Status and Analog sheets using ClosedXML
-- **File Comparison**: Compares generated Excel files against expected output
-- **Batch Processing**: Processes all PDF files in the input folder and combines them into a single output
+This tool processes scanned PDF documents containing RTU point list tables. It uses OCR (Optical Character Recognition) to extract text, detects table structures by analyzing word geometry, and exports the first two columns (Point Number and Point Name) to an Excel file.
+
+## Requirements
+
+- **Operating System**: Windows (required for PdfiumViewer native libraries)
+- **.NET**: .NET 8.0 SDK or later
+- **Tesseract Data**: `tessdata` directory with English language data (`eng.traineddata`)
+
+## Installation
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/bartonrd/RTUPointListParser.git
+cd RTUPointListParser
+```
+
+### 2. Set Up Tessdata
+
+Ensure the `tessdata` directory exists in the project root with the English trained data file:
+
+```
+RTUPointListParser/
+├── tessdata/
+│   └── eng.traineddata
+├── RTUPointlistParse/
+└── ...
+```
+
+You can download `eng.traineddata` from: https://github.com/tesseract-ocr/tessdata
+
+### 3. Build the Project
+
+```bash
+cd RTUPointlistParse/RTUPointlistParse
+dotnet build
+```
 
 ## Usage
 
@@ -20,173 +52,167 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 
 ### Parameters
 
-- `inputFolder` (optional): Path to folder containing PDF files to parse
-  - Default: `ExamplePointlists/Example1/Input`
-- `outputFolder` (optional): Path to folder where Excel files will be saved
-  - Default: `ExamplePointlists/Example1/TestOutput`
+- `inputFolder` (optional): Path to folder containing PDF files
+  - Default: `C:\dev\RTUPointListParser\ExamplePointlists\Example1\Input`
+- `outputFolder` (optional): Path to output folder
+  - Default: `C:\dev\RTUPointListParser\ExamplePointlists\Example1\TestOutput`
 
-### Examples
+### Environment Variables
+
+- `TESSDATA_DIR`: Path to tessdata directory (default: project root tessdata folder)
+- `TESSERACT_LANG`: Tesseract language (default: "eng")
+
+### Example
 
 **Using default folders:**
 ```bash
-dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj
+dotnet run
 ```
 
 **Using custom folders:**
 ```bash
-dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj "path/to/input" "path/to/output"
+dotnet run "C:\path\to\pdfs" "C:\path\to\output"
 ```
 
-## Output Format
+## Output Files
 
-The application generates Excel files with two worksheets, each containing only the essential point identification columns:
+The application generates two files in the output folder:
 
-### Status Sheet
-Contains DNP status point list data with columns:
-- **Point Number**: Sequential index for each point (0-based)
-- **Point Name**: Name/description of the status point
+### 1. PointList.xlsx
+Excel file with a single sheet named "Points" containing:
+- **Point Number**: Integer point number (sorted ascending)
+- **Point Name**: String description of the point
 
-### Analog Sheet
-Contains DNP analog point list data with columns:
-- **Point Number**: Sequential index for each point (0-based)
-- **Point Name**: Name/description of the analog point
+### 2. PointList.log.txt
+Processing log with:
+- Files processed
+- Rows extracted
+- Validation warnings (duplicates, gaps in sequence)
+- Any errors encountered
 
-**Note**: The parser automatically filters out:
-- Empty rows
-- Rows where the Point Name is "Spare" or "SPARE"
+## How It Works
 
-## Helper Methods
+### 1. PDF Rendering
+Uses **PdfiumViewer** to render PDF pages as high-resolution bitmaps (~300 DPI).
 
-The application implements the following key helper methods:
+### 2. OCR Processing
+Uses **Tesseract** to extract text with word-level bounding boxes, capturing both text content and spatial positioning.
 
-### `ExtractTextFromPdf(string filePath)`
-Extracts text content from a PDF file using PdfPig library.
+### 3. Table Detection
+Analyzes word positions to identify column bands:
+- **Column 1**: Point Number (leftmost numeric column, may have stacked "POINT"/"NUMBER" header)
+- **Column 2**: Point Name (next column to the right)
 
-**Parameters:**
-- `filePath`: Full path to the PDF file
+### 4. Row Clustering
+Groups words into rows based on vertical (Y) proximity, then extracts data from each row within the detected column bands.
 
-**Returns:** String containing extracted text
+### 5. Data Extraction
+For each row:
+- Extracts the first numeric token from Column 1 as Point Number
+- Combines all words from Column 2 (ordered by X position) as Point Name
+- Filters out malformed rows and "SPARE" entries
 
-### `ParseTable(string pdfText)`
-Parses table data from extracted PDF text into structured rows, extracting only Point Number and Point Name columns.
+### 6. Validation & Output
+- Aggregates rows from all PDFs and pages
+- Sorts by Point Number (ascending)
+- Validates continuity (logs gaps and duplicates)
+- Writes Excel file and log
 
-**Parameters:**
-- `pdfText`: Text extracted from PDF
+## Implementation Details
 
-**Returns:** List of `TableRow` objects containing only Point Number and Point Name
+### Key Classes
 
-### `GenerateExcel(List<TableRow> statusRows, List<TableRow> analogRows, string outputPath)`
-Creates an Excel (.xlsx) file with Status and Analog sheets, each containing Point Number and Point Name columns.
+#### `App` Class
+Main application class with the following methods:
 
-**Parameters:**
-- `statusRows`: Data rows for Status sheet (Point Number and Point Name)
-- `analogRows`: Data rows for Analog sheet (Point Number and Point Name)
-- `outputPath`: Full path where Excel file will be saved
+- `Task<int> RunAsync(...)`: Main processing pipeline
+- `GetPdfFiles(string)`: Enumerates PDF files in input folder
+- `RenderPdfToBitmaps(string, int, Action<string>)`: Converts PDF pages to bitmaps
+- `OcrWordsFromBitmap(Bitmap, TesseractEngine)`: Performs OCR and extracts word bounding boxes
+- `DetectFirstTwoColumnBands(List<OcrWord>)`: Identifies column regions by geometry
+- `ClusterWordsIntoRows(List<OcrWord>, int)`: Groups words into row clusters
+- `ExtractRows(...)`: Extracts Point Number and Point Name from rows
+- `Normalize(string)`: Cleans up OCR text artifacts
+- `ValidateSequence(IEnumerable<int>)`: Detects gaps and duplicates
+- `WriteExcel(string, IEnumerable<(int, string)>)`: Generates Excel output
+- `WriteLog(string, IEnumerable<string>)`: Writes log file
 
-### `CompareExcelFiles(string generatedFile, string expectedFile)`
-Compares two Excel files and reports differences.
+#### Records
+- `OcrWord(string Text, Rectangle Bounds, float Confidence)`: Represents a word from OCR with spatial info
+- `RowCluster(int Y, List<OcrWord> Words)`: Represents a horizontal row of words
 
-**Parameters:**
-- `generatedFile`: Path to generated Excel file
-- `expectedFile`: Path to expected Excel file
+### Dependencies
 
-**Returns:** Boolean indicating if files match
-
-## Libraries Used
-
-- **PdfPig (1.7.0-custom-5)**: PDF text extraction
-- **ClosedXML (0.105.0)**: Excel file generation and manipulation
-- **Tesseract OCR**: Optical Character Recognition for image-based PDFs (via system binary)
-- **Poppler Utils**: PDF to image conversion (via pdftoppm)
-
-## OCR Support for Image-Based PDFs
-
-The application automatically handles image-based PDFs (scanned documents) using OCR:
-
-### How It Works
-
-1. **Text Extraction First**: Attempts to extract text directly from the PDF using PdfPig
-2. **OCR Fallback**: If no text is found, automatically:
-   - Converts PDF pages to images using `pdftoppm`
-   - Performs OCR using Tesseract
-   - Extracts text from the images
-3. **Data Parsing**: Parses the extracted text into structured table data
-
-### System Requirements for OCR
-
-The application requires the following system packages for OCR functionality:
-
-#### Windows
-
-1. **Tesseract OCR**:
-   - Download installer from: https://github.com/UB-Mannheim/tesseract/wiki
-   - Run the installer (recommended path: `C:\Program Files\Tesseract-OCR`)
-   - **Important**: During installation, check "Add to PATH" or manually add to system PATH
-   - Verify installation: Open Command Prompt and run `tesseract --version`
-
-2. **Poppler Utils**:
-   - Download from: https://blog.alivate.com.au/poppler-windows/
-   - Extract the ZIP file (e.g., to `C:\Program Files\poppler`)
-   - Add the `bin` folder to your system PATH (e.g., `C:\Program Files\poppler\bin`)
-   - Verify installation: Open Command Prompt and run `pdftoppm -v`
-
-**Adding to PATH on Windows:**
-- Right-click "This PC" → Properties → Advanced system settings → Environment Variables
-- Under "System variables", find "Path" and click Edit
-- Click "New" and add the path to the tool's bin folder
-- Click OK and restart your Command Prompt/PowerShell
-
-#### Linux (Ubuntu/Debian)
-
-```bash
-sudo apt-get update
-sudo apt-get install tesseract-ocr poppler-utils
+```xml
+<PackageReference Include="PdfiumViewer" Version="2.13.0" />
+<PackageReference Include="Tesseract" Version="5.2.0" />
+<PackageReference Include="ClosedXML" Version="0.105.0" />
+<PackageReference Include="System.Drawing.Common" Version="8.0.0" />
 ```
 
-#### macOS
-
-```bash
-brew install tesseract poppler
-```
-
-### OCR Performance
-
-- **Accuracy**: Depends on PDF image quality and resolution
-- **Speed**: Processes approximately 1-2 pages per second
-- **Output**: Extracts text data even from scanned/image-only PDFs
-
-### Example OCR Output
+## Project Structure
 
 ```
-Processing: Control115_sh2_145937196.pdf
-  No text found, attempting OCR...
-  Performing OCR on PDF...
-  OCR completed on 1 page(s)
-  Extracted 100 Analog rows
-
-Processing: Control115_sh1_145934779.pdf
-  No text found, attempting OCR...
-  Performing OCR on PDF...
-  OCR completed on 1 page(s)
-  Extracted 97 Status rows
+RTUPointListParser/
+├── tessdata/
+│   └── eng.traineddata          # Tesseract language data
+├── RTUPointlistParse/
+│   └── RTUPointlistParse/
+│       ├── Program.cs            # Main application code
+│       └── RTUPointlistParse.csproj
+├── ExamplePointlists/
+│   └── Example1/
+│       ├── Input/                # Sample PDF files
+│       ├── TestOutput/           # Generated output
+│       └── Expected Output/      # Reference output
+└── README.md
 ```
+
+## Troubleshooting
+
+### Build Warnings
+- **NU1701**: PdfiumViewer targets .NET Framework but is compatible with .NET 8 - this warning is safe to ignore.
+
+### Runtime Issues
+- **Native Library Errors**: PdfiumViewer requires Windows native libraries. This application cannot run on Linux or macOS.
+- **Tesseract Not Found**: Ensure `TESSDATA_DIR` environment variable points to a valid tessdata directory.
+- **Poor OCR Results**: 
+  - Verify input PDFs are scanned at adequate resolution (300 DPI recommended)
+  - Check that `eng.traineddata` is the correct version for Tesseract 5.x
+
+### Empty Output
+- Verify PDFs contain image data (not just vector graphics)
+- Check log file for error messages
+- Ensure table structure matches expected format (numeric column followed by text column)
 
 ## Example Output
 
-When run with the Example1 data, the application will:
+### Console Output
+```
+RTU Point List Parser
+=====================
+Input folder: C:\dev\RTUPointListParser\ExamplePointlists\Example1\Input
+Output folder: C:\dev\RTUPointListParser\ExamplePointlists\Example1\TestOutput
 
-1. Process all PDF files in `ExamplePointlists/Example1/Input`
-2. Generate `Control_rtu837_DNP_pointlist_rev00.xlsx` in `ExamplePointlists/Example1/TestOutput`
-3. Compare the generated file with the expected output in `ExamplePointlists/Example1/Expected Output`
-4. Display a summary of any differences found
+Found 2 PDF file(s) to process
 
-## Building
+Processing: Control115_sh1_145934779.pdf
+  Rendered 1 page(s)
+  Extracted 97 total rows so far
+Processing: Control115_sh2_145937196.pdf
+  Rendered 1 page(s)
+  Extracted 197 total rows so far
 
-```bash
-dotnet build RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj
+Total rows extracted: 197
+
+Written: C:\dev\RTUPointListParser\ExamplePointlists\Example1\TestOutput\PointList.xlsx
+Written: C:\dev\RTUPointListParser\ExamplePointlists\Example1\TestOutput\PointList.log.txt
 ```
 
-## Requirements
+## License
 
-- .NET 10.0 or later
-- Linux, macOS, or Windows
+This project is provided as-is for educational and internal use.
+
+## Contributing
+
+Contributions are welcome! Please ensure all changes maintain the existing code structure and include appropriate tests.
