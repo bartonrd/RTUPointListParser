@@ -31,6 +31,9 @@ namespace RTUPointlistParse
         private static readonly System.Text.RegularExpressions.Regex WhitespaceNormalizePattern =
             new System.Text.RegularExpressions.Regex(@"\s+", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex LeadingSeparatorsPattern =
+            new System.Text.RegularExpressions.Regex(@"^[=_\s—]+\d{1,3}\s*", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
 
         public static void Main(string[] args)
         {
