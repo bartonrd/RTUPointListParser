@@ -529,8 +529,11 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Check if a point name is valid (not empty and not a "Spare" entry)
+        /// Check if a point name is valid (not empty and does not contain "Spare")
+        /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
         /// </summary>
+        /// <param name="pointName">The point name to validate</param>
+        /// <returns>True if the point name is valid, false otherwise</returns>
         private static bool IsValidPointName(string pointName)
         {
             return !string.IsNullOrWhiteSpace(pointName) && 
