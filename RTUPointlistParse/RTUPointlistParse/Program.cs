@@ -24,10 +24,10 @@ namespace RTUPointlistParse
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
-            new System.Text.RegularExpressions.Regex(@"^\d+\s*[|\[]", 
+            new System.Text.RegularExpressions.Regex(@"^\d+\s*[_|\[]", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex IndexExtractionPattern =
-            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[|\[](.+)", 
+            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[_|\[](.+)", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex AlarmClassPattern =
             new System.Text.RegularExpressions.Regex(@"Class\s+(\d+)", 
@@ -585,6 +585,7 @@ namespace RTUPointlistParse
             
             // Find the best split point - look for indices >= MIN_SECOND_COLUMN_INDEX which typically indicate second column
             int bestSplitIndex = -1;
+            int foundRowIndex = -1;
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
                 if (int.TryParse(match.Groups[1].Value, out int rowIndex))
@@ -593,6 +594,7 @@ namespace RTUPointlistParse
                     if (rowIndex >= MIN_SECOND_COLUMN_INDEX && match.Index > MIN_CHAR_POSITION)
                     {
                         bestSplitIndex = match.Index;
+                        foundRowIndex = rowIndex;
                         break;
                     }
                 }
@@ -603,6 +605,10 @@ namespace RTUPointlistParse
                 // Split at this point
                 string leftColumn = line.Substring(0, bestSplitIndex).Trim();
                 string rightColumn = line.Substring(bestSplitIndex).Trim();
+                
+                Console.WriteLine($"  DEBUG: Split line at pos {bestSplitIndex}, row index {foundRowIndex}");
+                Console.WriteLine($"    Left: {leftColumn.Substring(0, Math.Min(60, leftColumn.Length))}...");
+                Console.WriteLine($"    Right: {rightColumn.Substring(0, Math.Min(60, rightColumn.Length))}...");
                 
                 if (!string.IsNullOrWhiteSpace(leftColumn))
                     result.Add(leftColumn);
