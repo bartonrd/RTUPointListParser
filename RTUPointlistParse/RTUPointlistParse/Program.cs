@@ -31,6 +31,8 @@ public class App
     // Column detection constants
     private const int ColumnSeparationPixels = 20;  // Minimum horizontal gap between columns
     private const int LeftColumnThresholdDivisor = 3;  // Use first 1/3 of X positions for left column
+    private const int NumericColumnXTolerance = 50;  // Tolerance for grouping numeric words in column 1
+    private const int Col2StartXTolerance = 20;  // Tolerance for column 2 start position
     
     // OCR artifact filtering
     private static readonly HashSet<string> OcrNoisePatterns = new(StringComparer.OrdinalIgnoreCase)
@@ -232,7 +234,7 @@ public class App
         var medianNumericX = numericXPositions[numericXPositions.Count / 2];
         
         // Define column 1 band around the numeric words (point numbers)
-        var col1Words = numericWords.Where(w => Math.Abs(w.Bounds.X - medianNumericX) < 50).ToList();
+        var col1Words = numericWords.Where(w => Math.Abs(w.Bounds.X - medianNumericX) < NumericColumnXTolerance).ToList();
         if (col1Words.Count == 0) return null;
 
         var col1MinX = col1Words.Min(w => w.Bounds.X);
@@ -248,7 +250,7 @@ public class App
         var rightXPositions = rightWords.Select(w => w.Bounds.X).OrderBy(x => x).ToList();
         var col2StartX = rightXPositions[Math.Min(rightXPositions.Count / 4, rightXPositions.Count - 1)];
         
-        var col2Words = rightWords.Where(w => w.Bounds.X >= col2StartX - 20).ToList();
+        var col2Words = rightWords.Where(w => w.Bounds.X >= col2StartX - Col2StartXTolerance).ToList();
         if (col2Words.Count == 0) return null;
 
         var col2MinX = col2Words.Min(w => w.Bounds.X);
@@ -379,12 +381,12 @@ public class App
         while (cleaned.Length > 1 && (cleaned[0] == 'l' || cleaned[0] == 'f' || cleaned[0] == 'I') && 
                char.IsUpper(cleaned[1]))
         {
-            cleaned = cleaned.Substring(1);
+            cleaned = cleaned[1..];
         }
 
         if (cleaned.StartsWith("/") && cleaned.Length > 1)
         {
-            cleaned = cleaned.Substring(1);
+            cleaned = cleaned[1..];
         }
 
         // Fix common OCR character confusions
