@@ -115,24 +115,44 @@ namespace RTUPointlistParse
                         
                         if (fileName.Contains("sh1") || fileName.Contains("status"))
                         {
-                            // Parse as Status data
+                            // Parse as Status data - will process all tables found
                             var tableRows = ParseStatusTable(pdfText);
                             allStatusRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
                         }
                         else if (fileName.Contains("sh2") || fileName.Contains("analog"))
                         {
-                            // Parse as Analog data
+                            // Parse as Analog data - will process all tables found
                             var tableRows = ParseAnalogTable(pdfText);
                             allAnalogRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
                         }
                         else
                         {
-                            // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
+                            // Unknown type - try both types to ensure all tables are processed
+                            var statusTableRows = ParseStatusTable(pdfText);
+                            var analogTableRows = ParseAnalogTable(pdfText);
+                            
+                            // Add whichever has more data, or both if they're different
+                            if (statusTableRows.Count > 0 && analogTableRows.Count > 0 && statusTableRows.Count != analogTableRows.Count)
+                            {
+                                // Different counts suggest different data types, add both
+                                allStatusRows.AddRange(statusTableRows);
+                                allAnalogRows.AddRange(analogTableRows);
+                                Console.WriteLine($"  Extracted {statusTableRows.Count} Status rows and {analogTableRows.Count} Analog rows");
+                            }
+                            else if (statusTableRows.Count >= analogTableRows.Count)
+                            {
+                                // Same count or more status - probably status data
+                                allStatusRows.AddRange(statusTableRows);
+                                Console.WriteLine($"  Extracted {statusTableRows.Count} rows (assumed Status)");
+                            }
+                            else
+                            {
+                                // More analog - probably analog data
+                                allAnalogRows.AddRange(analogTableRows);
+                                Console.WriteLine($"  Extracted {analogTableRows.Count} rows (assumed Analog)");
+                            }
                         }
                     }
                 }
@@ -460,9 +480,13 @@ namespace RTUPointlistParse
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             int pointNumber = 0;
+            int totalLinesProcessed = 0;
+            int dataRowsFound = 0;
+            int validPointsExtracted = 0;
 
             foreach (var line in lines)
             {
+                totalLinesProcessed++;
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
@@ -485,6 +509,7 @@ namespace RTUPointlistParse
                     // Check if this looks like a data row (starts with number followed by | or [)
                     if (DataRowPattern.IsMatch(columnLine))
                     {
+                        dataRowsFound++;
                         // Parse this as a status data row - extract only Point Number and Point Name
                         var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
                         if (parsedRow != null)
@@ -496,12 +521,14 @@ namespace RTUPointlistParse
                             {
                                 rows.Add(parsedRow);
                                 pointNumber++;
+                                validPointsExtracted++;
                             }
                         }
                     }
                 }
             }
 
+            Console.WriteLine($"  Debug: Total lines={totalLinesProcessed}, Data rows={dataRowsFound}, Valid points={validPointsExtracted}");
             return rows;
         }
 
@@ -514,9 +541,13 @@ namespace RTUPointlistParse
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             int pointNumber = 0;
+            int totalLinesProcessed = 0;
+            int dataRowsFound = 0;
+            int validPointsExtracted = 0;
 
             foreach (var line in lines)
             {
+                totalLinesProcessed++;
                 if (string.IsNullOrWhiteSpace(line))
                     continue;
 
@@ -537,6 +568,7 @@ namespace RTUPointlistParse
                     // Check if this looks like a data row
                     if (DataRowPattern.IsMatch(columnLine))
                     {
+                        dataRowsFound++;
                         // Parse this as an analog data row - extract only Point Number and Point Name
                         var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
                         if (parsedRow != null)
@@ -548,12 +580,14 @@ namespace RTUPointlistParse
                             {
                                 rows.Add(parsedRow);
                                 pointNumber++;
+                                validPointsExtracted++;
                             }
                         }
                     }
                 }
             }
 
+            Console.WriteLine($"  Debug: Total lines={totalLinesProcessed}, Data rows={dataRowsFound}, Valid points={validPointsExtracted}");
             return rows;
         }
 
