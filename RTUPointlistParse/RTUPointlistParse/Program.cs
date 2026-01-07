@@ -20,10 +20,10 @@ namespace RTUPointlistParse
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
-            new System.Text.RegularExpressions.Regex(@"^\d+\s*[|\[]", 
+            new System.Text.RegularExpressions.Regex(@"^\s*\d+\s+", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex IndexExtractionPattern =
-            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[|\[](.+)", 
+            new System.Text.RegularExpressions.Regex(@"^\s*(\d+)\s+(.+)", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex AlarmClassPattern =
             new System.Text.RegularExpressions.Regex(@"Class\s+(\d+)", 
@@ -436,13 +436,13 @@ namespace RTUPointlistParse
 
         /// <summary>
         /// Parse table data from extracted PDF text into structured rows for Status sheet
-        /// Extracts only Point Number and Point Name columns
+        /// Extracts only Point Number and Point Name columns. Point numbers start at 1.
         /// </summary>
         public static List<TableRow> ParseStatusTable(string pdfText)
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            int pointNumber = 1;  // Start at 1 per requirements
 
             foreach (var line in lines)
             {
@@ -455,7 +455,7 @@ namespace RTUPointlistParse
                 if (IsMetadataOrHeaderLine(trimmedLine))
                     continue;
 
-                // Check if this looks like a data row (starts with number followed by | or [)
+                // Check if this looks like a data row (starts with number followed by whitespace)
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
                     // Parse this as a status data row - extract only Point Number and Point Name
@@ -464,7 +464,7 @@ namespace RTUPointlistParse
                     {
                         string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                         
-                        // Filter out empty rows and rows where Point Name contains "Spare"
+                        // Filter out empty rows and rows where Point Name equals "Spare" exactly
                         if (IsValidPointName(pointName))
                         {
                             rows.Add(parsedRow);
@@ -479,13 +479,13 @@ namespace RTUPointlistParse
 
         /// <summary>
         /// Parse table data from extracted PDF text into structured rows for Analog sheet
-        /// Extracts only Point Number and Point Name columns
+        /// Extracts only Point Number and Point Name columns. Point numbers start at 1.
         /// </summary>
         public static List<TableRow> ParseAnalogTable(string pdfText)
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            int pointNumber = 1;  // Start at 1 per requirements
 
             foreach (var line in lines)
             {
@@ -507,7 +507,7 @@ namespace RTUPointlistParse
                     {
                         string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                         
-                        // Filter out empty rows and rows where Point Name contains "Spare"
+                        // Filter out empty rows and rows where Point Name equals "Spare" exactly
                         if (IsValidPointName(pointName))
                         {
                             rows.Add(parsedRow);
@@ -529,15 +529,16 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Check if a point name is valid (not empty and does not contain "Spare")
-        /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
+        /// Check if a point name is valid (not empty and not exactly "Spare")
+        /// Uses case-insensitive comparison for exact match only.
+        /// Point names containing "SPARE" like "SPARE A 74" are kept.
         /// </summary>
         /// <param name="pointName">The point name to validate</param>
         /// <returns>True if the point name is valid, false otherwise</returns>
         private static bool IsValidPointName(string pointName)
         {
             return !string.IsNullOrWhiteSpace(pointName) && 
-                   !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase);
+                   !pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -580,23 +581,15 @@ namespace RTUPointlistParse
         {
             try
             {
-                // Pattern: NUMBER | POINT_NAME ... 
+                // Pattern: NUMBER POINT_NAME ... 
                 var match = IndexExtractionPattern.Match(line);
                 if (!match.Success)
                     return null;
 
                 string remainder = match.Groups[2].Value;
 
-                // Split by | to separate sections
-                var sections = remainder.Split('|');
-                if (sections.Length < 1)
-                    return null;
-
-                // First section contains the point name
-                string firstSection = sections[0].Trim();
-
-                // Extract point name (everything before certain keywords)
-                string pointName = ExtractPointName(firstSection);
+                // Extract point name directly from remainder (no pipe splitting)
+                string pointName = ExtractPointName(remainder);
                 if (string.IsNullOrWhiteSpace(pointName))
                     return null;
 
@@ -736,6 +729,7 @@ namespace RTUPointlistParse
 
             var tokens = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             var nameTokens = new List<string>();
+            bool foundFirstToken = false;
 
             foreach (var token in tokens)
             {
@@ -758,18 +752,29 @@ namespace RTUPointlistParse
                     continue;
                 }
 
-                // Skip tokens that are just numbers (unless part of a name like "NO. 1")
-                if (int.TryParse(cleaned, out _) && !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
+                // If we've found at least one token, check if this looks like a numeric column value
+                if (foundFirstToken && cleaned.Length <= 3 && int.TryParse(cleaned, out int num))
                 {
-                    // Allow small numbers that might be part of names
-                    if (cleaned.Length <= 2)
-                        nameTokens.Add(cleaned);
-                    break;  // Stop after first standalone number
+                    // This might be a column value like an index, not part of the name
+                    // Unless it follows special patterns like "NO." or "PLANT"
+                    if (!nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT") && 
+                        !nameTokens.Contains("CK") && !nameTokens.Contains("PEAK") &&
+                        !nameTokens.Contains("BANK") && !nameTokens.Contains("CB"))
+                    {
+                        break;  // Stop here, likely hit a numeric column
+                    }
+                }
+
+                // Skip tokens that are just single characters that look like OCR artifacts
+                if (cleaned.Length == 1 && (cleaned == "f" || cleaned == "I" || cleaned == "i" || cleaned == "l"))
+                {
+                    continue;
                 }
 
                 nameTokens.Add(cleaned);
+                foundFirstToken = true;
 
-                // Stop after collecting enough tokens (point names are usually 2-6 words)
+                // Stop after collecting enough tokens (point names are usually 2-10 words)
                 if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
                     break;
             }
