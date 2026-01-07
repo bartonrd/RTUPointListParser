@@ -464,10 +464,8 @@ namespace RTUPointlistParse
                     {
                         string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                         
-                        // Filter out empty rows and rows where Point Name contains "Spare" or "SPARE"
-                        if (!string.IsNullOrWhiteSpace(pointName) && 
-                            !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase) &&
-                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        // Filter out empty rows and rows where Point Name contains "Spare"
+                        if (IsValidPointName(pointName))
                         {
                             rows.Add(parsedRow);
                             pointNumber++;
@@ -509,10 +507,8 @@ namespace RTUPointlistParse
                     {
                         string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                         
-                        // Filter out empty rows and rows where Point Name contains "Spare" or "SPARE"
-                        if (!string.IsNullOrWhiteSpace(pointName) && 
-                            !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase) &&
-                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        // Filter out empty rows and rows where Point Name contains "Spare"
+                        if (IsValidPointName(pointName))
                         {
                             rows.Add(parsedRow);
                             pointNumber++;
@@ -530,6 +526,15 @@ namespace RTUPointlistParse
         public static List<TableRow> ParseTable(string pdfText)
         {
             return ParseStatusTable(pdfText);
+        }
+
+        /// <summary>
+        /// Check if a point name is valid (not empty and not a "Spare" entry)
+        /// </summary>
+        private static bool IsValidPointName(string pointName)
+        {
+            return !string.IsNullOrWhiteSpace(pointName) && 
+                   !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
