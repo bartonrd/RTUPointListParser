@@ -5,9 +5,11 @@ A C# .NET Console Application for parsing RTU point list data from PDF files and
 ## Features
 
 - **PDF Text Extraction**: Extracts text from PDF files using PdfPig library
-- **Table Parsing**: Converts extracted text into structured table data
-- **Excel Generation**: Creates formatted .xlsx files with Status and Analog sheets using ClosedXML
-- **File Comparison**: Compares generated Excel files against expected output
+- **OCR Support**: Automatically handles image-based PDFs using Tesseract OCR
+- **Point Name Extraction**: Extracts Point Names from all tables in PDF files
+- **Smart Filtering**: Automatically filters out "Spare" entries and empty rows
+- **OCR Artifact Cleanup**: Cleans up common OCR recognition errors
+- **Excel Generation**: Creates formatted .xlsx files with extracted data using ClosedXML
 - **Batch Processing**: Processes all PDF files in the input folder and combines them into a single output
 
 ## Usage
@@ -39,63 +41,50 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 
 ## Output Format
 
-The application generates Excel files with two worksheets:
+The application generates an Excel file with a single worksheet containing extracted Point Names:
 
-### Status Sheet
-Contains DNP status point list data with columns including:
-- TAB DEC DNP INDEX
-- CONTROL ADDRESS
-- POINT NAME
-- NORMAL STATE
-- STATE INFO
-- ALARMS
-- EMS CROSS REFERENCE DATA
-- IED INFORMATION
-
-### Analog Sheet
-Contains DNP analog point list data with columns including:
-- TAB DEC DNP INDEX
-- POINT NAME
-- SCALING (Coefficient, Offset)
-- FULL SCALE (Value, Unit)
-- LIMITS (Low, High)
-- ALARMS
-- EMS CROSS REFERENCE DATA
-- IED INFORMATION
+### Point Names Sheet
+Contains a single column with all Point Names extracted from the PDF files:
+- Point Name (header)
+- One point name per row
+- "Spare" entries are filtered out
+- Empty rows are excluded
+- OCR artifacts are cleaned up automatically
 
 ## Helper Methods
 
 The application implements the following key helper methods:
 
 ### `ExtractTextFromPdf(string filePath)`
-Extracts text content from a PDF file using PdfPig library.
+Extracts text content from a PDF file using PdfPig library. Automatically falls back to OCR if no text is found.
 
 **Parameters:**
 - `filePath`: Full path to the PDF file
 
 **Returns:** String containing extracted text
 
-### `ParseTable(string pdfText)`
-Parses table data from extracted PDF text into structured rows.
+### `ExtractPointNamesFromPdf(string pdfText)`
+Extracts only Point Names from PDF text, filtering out "Spare" entries and empty rows.
 
 **Parameters:**
 - `pdfText`: Text extracted from PDF
 
-**Returns:** List of `TableRow` objects containing column data
+**Returns:** List of strings containing point names
 
-### `GenerateExcel(List<TableRow> statusRows, List<TableRow> analogRows, string outputPath)`
-Creates an Excel (.xlsx) file with formatted Status and Analog sheets.
+### `GeneratePointNameExcel(List<string> pointNames, string outputPath)`
+Creates an Excel (.xlsx) file with a single column containing Point Names.
 
 **Parameters:**
-- `statusRows`: Data rows for Status sheet
-- `analogRows`: Data rows for Analog sheet
+- `pointNames`: List of point names to include in the Excel file
 - `outputPath`: Full path where Excel file will be saved
 
-### `CompareExcelFiles(string generatedFile, string expectedFile)`
-Compares two Excel files and reports differences.
+### `FinalCleanPointName(string pointName)`
+Performs final cleanup on extracted point names to remove OCR artifacts.
 
 **Parameters:**
-- `generatedFile`: Path to generated Excel file
+- `pointName`: Raw point name with potential OCR errors
+
+**Returns:** Cleaned point name string
 - `expectedFile`: Path to expected Excel file
 
 **Returns:** Boolean indicating if files match
@@ -118,7 +107,12 @@ The application automatically handles image-based PDFs (scanned documents) using
    - Converts PDF pages to images using `pdftoppm`
    - Performs OCR using Tesseract
    - Extracts text from the images
-3. **Data Parsing**: Parses the extracted text into structured table data
+3. **Point Name Extraction**: Parses the extracted text to identify Point Name columns
+4. **OCR Cleanup**: Applies intelligent cleanup to remove common OCR artifacts
+   - Removes leading lowercase letters before uppercase (e.g., "l115KV" → "115KV")
+   - Removes erroneous leading capital letters (e.g., "INO." → "NO.")
+   - Fixes common character confusions (e.g., "N15KV" → "115KV")
+   - Filters out placeholder entries and formatting artifacts
 
 ### System Requirements for OCR
 
@@ -170,13 +164,17 @@ Processing: Control115_sh2_145937196.pdf
   No text found, attempting OCR...
   Performing OCR on PDF...
   OCR completed on 1 page(s)
-  Extracted 100 Analog rows
+  Extracted 34 Point Names
 
 Processing: Control115_sh1_145934779.pdf
   No text found, attempting OCR...
   Performing OCR on PDF...
   OCR completed on 1 page(s)
-  Extracted 97 Status rows
+  Extracted 41 Point Names
+
+Generating Excel file with Point Names: Control_rtu837_DNP_pointlist_rev00.xlsx
+Total Point Names extracted: 75
+  Generated: Control_rtu837_DNP_pointlist_rev00.xlsx
 ```
 
 ## Example Output
@@ -184,9 +182,13 @@ Processing: Control115_sh1_145934779.pdf
 When run with the Example1 data, the application will:
 
 1. Process all PDF files in `ExamplePointlists/Example1/Input`
-2. Generate `Control_rtu837_DNP_pointlist_rev00.xlsx` in `ExamplePointlists/Example1/TestOutput`
-3. Compare the generated file with the expected output in `ExamplePointlists/Example1/Expected Output`
-4. Display a summary of any differences found
+2. Extract Point Names from all tables in each PDF
+3. Filter out "Spare" entries and empty rows
+4. Apply OCR artifact cleanup
+5. Generate `Control_rtu837_DNP_pointlist_rev00.xlsx` in `ExamplePointlists/Example1/TestOutput`
+   - Single worksheet named "Point Names"
+   - One column with header "Point Name"
+   - One point name per row (75 point names from the example PDFs)
 
 ## Building
 
@@ -198,3 +200,6 @@ dotnet build RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj
 
 - .NET 10.0 or later
 - Linux, macOS, or Windows
+- For OCR support (image-based PDFs):
+  - Tesseract OCR
+  - Poppler Utils (pdftoppm)
