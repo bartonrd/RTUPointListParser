@@ -41,7 +41,10 @@ namespace RTUPointlistParse
         private static readonly System.Text.RegularExpressions.Regex TrailingSingleLetterPattern =
             new System.Text.RegularExpressions.Regex(@"\s+[A-Z]$",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
-        // Regex pattern for document reference numbers (typically 6-7 digit numbers >= 500000)
+        // Regex pattern for document reference numbers
+        // Matches 6-7 digit numbers starting with 5-9 (e.g., 564006, 5640064, 5640067, 585409)
+        // These are drawing/document reference numbers that appear in metadata rows
+        // and should be filtered out as they are not valid point numbers
         private static readonly System.Text.RegularExpressions.Regex DocumentReferencePattern =
             new System.Text.RegularExpressions.Regex(@"\b[5-9]\d{5,6}\b",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
@@ -628,25 +631,22 @@ namespace RTUPointlistParse
         {
             if (rows.Count == 0)
                 return rows;
-
-            int invalidRows = 0;
             
-            // Parse point numbers and sort
-            var sortedRows = rows
+            // Parse point numbers and separate valid from invalid
+            var parsedRows = rows
                 .Where(r => r.Columns.Count >= 2)
                 .Select(r => new
                 {
                     Row = r,
                     PointNum = int.TryParse(r.Columns[0], out int num) ? (int?)num : null
                 })
-                .Select(x => 
-                {
-                    if (!x.PointNum.HasValue)
-                        invalidRows++;
-                    return x;
-                })
-                .Where(x => x.PointNum.HasValue)  // Filter out invalid point numbers
-                .OrderBy(x => x.PointNum.Value)
+                .ToList();
+
+            // Count and filter invalid rows
+            int invalidRows = parsedRows.Count(x => !x.PointNum.HasValue);
+            var sortedRows = parsedRows
+                .Where(x => x.PointNum.HasValue)
+                .OrderBy(x => x.PointNum!.Value)
                 .Select(x => x.Row)
                 .ToList();
 
