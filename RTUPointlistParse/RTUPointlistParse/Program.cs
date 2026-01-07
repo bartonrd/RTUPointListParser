@@ -17,6 +17,8 @@ namespace RTUPointlistParse
         private const string DEFAULT_NORMAL_STATE = "1";  // Default normal state value
         private const int POINT_NAME_COLUMN_INDEX = 2;  // Column index for point name (Status)
         private const int POINT_NAME_COLUMN_INDEX_ANALOG = 1;  // Column index for point name (Analog)
+        private const int MAX_VALID_POINT_NUMBER = 10000;  // Maximum valid point number (above this likely doc reference)
+        private const int MIN_POINT_NAME_LENGTH = 3;  // Minimum length for valid point name
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
@@ -30,6 +32,18 @@ namespace RTUPointlistParse
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex WhitespaceNormalizePattern =
             new System.Text.RegularExpressions.Regex(@"\s+", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex DualColumnSplitPattern =
+            new System.Text.RegularExpressions.Regex(@"(\d+)\s*\|",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex ReferenceCodePattern =
+            new System.Text.RegularExpressions.Regex(@"^(RM|DI|W)\s*\d",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex AlphanumericCodePattern =
+            new System.Text.RegularExpressions.Regex(@"^\d+[A-Z]-?\d+$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex ShortAlphaCodePattern =
+            new System.Text.RegularExpressions.Regex(@"^[A-Z]{1,2}$",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
 
         public static void Main(string[] args)
@@ -516,7 +530,7 @@ namespace RTUPointlistParse
             // Example: "1 | POINT NAME | ... | 81 | POINT NAME | ..."
             
             // Find all occurrences of pattern: NUMBER |
-            var matches = System.Text.RegularExpressions.Regex.Matches(line, @"(\d+)\s*\|");
+            var matches = DualColumnSplitPattern.Matches(line);
             
             if (matches.Count >= 2)
             {
@@ -561,7 +575,7 @@ namespace RTUPointlistParse
             var rows = new List<TableRow>();
             
             // Try to split the line into left and right sections
-            var matches = System.Text.RegularExpressions.Regex.Matches(line, @"(\d+)\s*\|");
+            var matches = DualColumnSplitPattern.Matches(line);
             
             if (matches.Count >= 2)
             {
@@ -595,6 +609,28 @@ namespace RTUPointlistParse
             }
             
             return rows;
+        }
+
+        /// <summary>
+        /// Validate that a point name is not a reference code or OCR artifact
+        /// </summary>
+        private static bool IsValidPointName(string pointName)
+        {
+            if (string.IsNullOrWhiteSpace(pointName))
+                return false;
+
+            // Filter out entries that are too short (likely OCR artifacts)
+            if (pointName.Length < MIN_POINT_NAME_LENGTH || 
+                pointName.All(c => char.IsWhiteSpace(c) || c == '|' || c == 'I' || c == 'F'))
+                return false;
+
+            // Filter out entries that look like reference numbers or codes
+            if (ReferenceCodePattern.IsMatch(pointName) ||
+                AlphanumericCodePattern.IsMatch(pointName) ||
+                ShortAlphaCodePattern.IsMatch(pointName))
+                return false;
+
+            return true;
         }
 
         /// <summary>
@@ -647,7 +683,7 @@ namespace RTUPointlistParse
                 string remainder = match.Groups[2].Value;
 
                 // Filter out obviously invalid point numbers (too large = likely drawing/doc numbers)
-                if (int.TryParse(pointNumber, out int numVal) && numVal > 10000)
+                if (int.TryParse(pointNumber, out int numVal) && numVal > MAX_VALID_POINT_NUMBER)
                     return null;
 
                 // Split by | to separate sections
@@ -670,17 +706,9 @@ namespace RTUPointlistParse
                     return null;
                 }
 
-                // Filter out entries that are too short (likely OCR artifacts)
-                if (pointName.Length < 3 || pointName.All(c => char.IsWhiteSpace(c) || c == '|' || c == 'I' || c == 'F'))
+                // Validate point name using shared validation logic
+                if (!IsValidPointName(pointName))
                     return null;
-
-                // Filter out entries that look like reference numbers or codes (e.g., "RM 5-37/38", "6A", "1C-13")
-                if (System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^(RM|DI|W)\s*\d") ||
-                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^\d+[A-Z]-?\d+$") ||
-                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^[A-Z]{1,2}$"))
-                {
-                    return null;
-                }
 
                 // Build the row with only Point Number and Point Name
                 var columns = new List<string>
@@ -714,7 +742,7 @@ namespace RTUPointlistParse
                 string remainder = match.Groups[2].Value;
 
                 // Filter out obviously invalid point numbers (too large = likely drawing/doc numbers)
-                if (int.TryParse(pointNumber, out int numVal) && numVal > 10000)
+                if (int.TryParse(pointNumber, out int numVal) && numVal > MAX_VALID_POINT_NUMBER)
                     return null;
 
                 var sections = remainder.Split('|');
@@ -735,17 +763,9 @@ namespace RTUPointlistParse
                     return null;
                 }
 
-                // Filter out entries that are too short (likely OCR artifacts)
-                if (pointName.Length < 3 || pointName.All(c => char.IsWhiteSpace(c) || c == '|' || c == 'I' || c == 'F'))
+                // Validate point name using shared validation logic
+                if (!IsValidPointName(pointName))
                     return null;
-
-                // Filter out entries that look like reference numbers or codes
-                if (System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^(RM|DI|W)\s*\d") ||
-                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^\d+[A-Z]-?\d+$") ||
-                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^[A-Z]{1,2}$"))
-                {
-                    return null;
-                }
 
                 // Build the row with only Point Number and Point Name
                 var columns = new List<string>
