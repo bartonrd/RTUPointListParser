@@ -456,12 +456,9 @@ namespace RTUPointlistParse
                 // Check if this looks like a data row (starts with number followed by | or [)
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
-                    // Parse this as a status data row
-                    var parsedRow = ParseStatusDataRow(trimmedLine, 0); // tabIndex not used anymore
-                    if (parsedRow != null && parsedRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[1]))
-                    {
-                        rows.Add(parsedRow);
-                    }
+                    // Parse line for potentially multiple point entries (dual-column table)
+                    var parsedRows = ParseDualColumnStatusRow(trimmedLine);
+                    rows.AddRange(parsedRows);
                 }
             }
 
@@ -490,12 +487,9 @@ namespace RTUPointlistParse
                 // Check if this looks like a data row
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
-                    // Parse this as an analog data row
-                    var parsedRow = ParseAnalogDataRow(trimmedLine, 0); // tabIndex not used anymore
-                    if (parsedRow != null && parsedRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[1]))
-                    {
-                        rows.Add(parsedRow);
-                    }
+                    // Parse line for potentially multiple point entries (dual-column table)
+                    var parsedRows = ParseDualColumnAnalogRow(trimmedLine);
+                    rows.AddRange(parsedRows);
                 }
             }
 
@@ -508,6 +502,99 @@ namespace RTUPointlistParse
         public static List<TableRow> ParseTable(string pdfText)
         {
             return ParseStatusTable(pdfText);
+        }
+
+        /// <summary>
+        /// Parse a line that may contain dual-column status table data (left and right sides)
+        /// </summary>
+        private static List<TableRow> ParseDualColumnStatusRow(string line)
+        {
+            var rows = new List<TableRow>();
+            
+            // Try to split the line into left and right sections
+            // Pattern: Look for a second point number that appears later in the line
+            // Example: "1 | POINT NAME | ... | 81 | POINT NAME | ..."
+            
+            // Find all occurrences of pattern: NUMBER |
+            var matches = System.Text.RegularExpressions.Regex.Matches(line, @"(\d+)\s*\|");
+            
+            if (matches.Count >= 2)
+            {
+                // Likely a dual-column row
+                // Split approximately in the middle or at the second number occurrence
+                int splitPos = matches[1].Index;
+                string leftPart = line.Substring(0, splitPos).Trim();
+                string rightPart = line.Substring(splitPos).Trim();
+                
+                // Parse left side
+                var leftRow = ParseStatusDataRow(leftPart, 0);
+                if (leftRow != null && leftRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(leftRow.Columns[1]))
+                {
+                    rows.Add(leftRow);
+                }
+                
+                // Parse right side
+                var rightRow = ParseStatusDataRow(rightPart, 0);
+                if (rightRow != null && rightRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(rightRow.Columns[1]))
+                {
+                    rows.Add(rightRow);
+                }
+            }
+            else
+            {
+                // Single column row
+                var row = ParseStatusDataRow(line, 0);
+                if (row != null && row.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(row.Columns[1]))
+                {
+                    rows.Add(row);
+                }
+            }
+            
+            return rows;
+        }
+
+        /// <summary>
+        /// Parse a line that may contain dual-column analog table data (left and right sides)
+        /// </summary>
+        private static List<TableRow> ParseDualColumnAnalogRow(string line)
+        {
+            var rows = new List<TableRow>();
+            
+            // Try to split the line into left and right sections
+            var matches = System.Text.RegularExpressions.Regex.Matches(line, @"(\d+)\s*\|");
+            
+            if (matches.Count >= 2)
+            {
+                // Likely a dual-column row
+                int splitPos = matches[1].Index;
+                string leftPart = line.Substring(0, splitPos).Trim();
+                string rightPart = line.Substring(splitPos).Trim();
+                
+                // Parse left side
+                var leftRow = ParseAnalogDataRow(leftPart, 0);
+                if (leftRow != null && leftRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(leftRow.Columns[1]))
+                {
+                    rows.Add(leftRow);
+                }
+                
+                // Parse right side
+                var rightRow = ParseAnalogDataRow(rightPart, 0);
+                if (rightRow != null && rightRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(rightRow.Columns[1]))
+                {
+                    rows.Add(rightRow);
+                }
+            }
+            else
+            {
+                // Single column row
+                var row = ParseAnalogDataRow(line, 0);
+                if (row != null && row.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(row.Columns[1]))
+                {
+                    rows.Add(row);
+                }
+            }
+            
+            return rows;
         }
 
         /// <summary>
@@ -559,6 +646,10 @@ namespace RTUPointlistParse
                 string pointNumber = match.Groups[1].Value.Trim();
                 string remainder = match.Groups[2].Value;
 
+                // Filter out obviously invalid point numbers (too large = likely drawing/doc numbers)
+                if (int.TryParse(pointNumber, out int numVal) && numVal > 10000)
+                    return null;
+
                 // Split by | to separate sections
                 var sections = remainder.Split('|');
                 if (sections.Length < 1)
@@ -575,6 +666,18 @@ namespace RTUPointlistParse
                 // Filter out "Spare" entries (case-insensitive)
                 if (pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase) || 
                     pointName.StartsWith("SPARE ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                // Filter out entries that are too short (likely OCR artifacts)
+                if (pointName.Length < 3 || pointName.All(c => char.IsWhiteSpace(c) || c == '|' || c == 'I' || c == 'F'))
+                    return null;
+
+                // Filter out entries that look like reference numbers or codes (e.g., "RM 5-37/38", "6A", "1C-13")
+                if (System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^(RM|DI|W)\s*\d") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^\d+[A-Z]-?\d+$") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^[A-Z]{1,2}$"))
                 {
                     return null;
                 }
@@ -609,6 +712,11 @@ namespace RTUPointlistParse
 
                 string pointNumber = match.Groups[1].Value.Trim();
                 string remainder = match.Groups[2].Value;
+
+                // Filter out obviously invalid point numbers (too large = likely drawing/doc numbers)
+                if (int.TryParse(pointNumber, out int numVal) && numVal > 10000)
+                    return null;
+
                 var sections = remainder.Split('|');
                 if (sections.Length < 1)
                     return null;
@@ -623,6 +731,18 @@ namespace RTUPointlistParse
                 // Filter out "Spare" entries (case-insensitive)
                 if (pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase) || 
                     pointName.StartsWith("SPARE ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                // Filter out entries that are too short (likely OCR artifacts)
+                if (pointName.Length < 3 || pointName.All(c => char.IsWhiteSpace(c) || c == '|' || c == 'I' || c == 'F'))
+                    return null;
+
+                // Filter out entries that look like reference numbers or codes
+                if (System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^(RM|DI|W)\s*\d") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^\d+[A-Z]-?\d+$") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(pointName, @"^[A-Z]{1,2}$"))
                 {
                     return null;
                 }
