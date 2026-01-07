@@ -493,15 +493,9 @@ namespace RTUPointlistParse
                     {
                         // Parse this as a status data row - extract Point Number and Point Name
                         var parsedRow = ParseSimpleDataRow(columnLine);
-                        if (parsedRow != null)
+                        if (parsedRow != null && IsValidPointRow(parsedRow))
                         {
-                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                            
-                            // Include all rows with valid point names (including Spare)
-                            if (!string.IsNullOrWhiteSpace(pointName) && pointName.Length > 2)
-                            {
-                                rows.Add(parsedRow);
-                            }
+                            rows.Add(parsedRow);
                         }
                     }
                 }
@@ -543,21 +537,27 @@ namespace RTUPointlistParse
                     {
                         // Parse this as an analog data row - extract Point Number and Point Name
                         var parsedRow = ParseSimpleDataRow(columnLine);
-                        if (parsedRow != null)
+                        if (parsedRow != null && IsValidPointRow(parsedRow))
                         {
-                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                            
-                            // Include all rows with valid point names (including Spare)
-                            if (!string.IsNullOrWhiteSpace(pointName) && pointName.Length > 2)
-                            {
-                                rows.Add(parsedRow);
-                            }
+                            rows.Add(parsedRow);
                         }
                     }
                 }
             }
 
             return rows;
+        }
+
+        /// <summary>
+        /// Validate that a parsed row has valid point data
+        /// </summary>
+        private static bool IsValidPointRow(TableRow row)
+        {
+            if (row.Columns.Count < 2)
+                return false;
+
+            string pointName = row.Columns[1];
+            return !string.IsNullOrWhiteSpace(pointName) && pointName.Length > 2;
         }
 
         /// <summary>
@@ -622,40 +622,6 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Check if a point name is valid (not empty and does not contain "Spare")
-        /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
-        /// </summary>
-        /// <param name="pointName">The point name to validate</param>
-        /// <returns>True if the point name is valid, false otherwise</returns>
-        private static bool IsValidPointName(string pointName)
-        {
-            if (string.IsNullOrWhiteSpace(pointName))
-                return false;
-            
-            // Filter out SPARE
-            if (pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase))
-                return false;
-            
-            // Filter out single characters or very short OCR artifacts
-            if (pointName.Length <= 2)
-                return false;
-            
-            // Filter out common OCR noise patterns
-            if (pointName == "I" || pointName == "F" || pointName == "J" || pointName == "L" ||
-                pointName == "—" || pointName == "=" || pointName == "DI" || pointName == "or")
-                return false;
-            
-            // Filter out reference/metadata lines
-            if (pointName.Contains("LISTING") || pointName.Contains("CONSTRUCTION") || 
-                pointName.Contains("ADDED POINT") || pointName.Contains("SYSTEM") ||
-                pointName.Contains("REFERENCE") || pointName.Contains("SAP") ||
-                pointName.Contains("PLOT BY") || pointName.StartsWith("RESERVED FOR"))
-                return false;
-            
-            return true;
-        }
-
-        /// <summary>
         /// Sort rows by point number and renumber them sequentially starting from 1
         /// </summary>
         private static List<TableRow> SortAndRenumberRows(List<TableRow> rows)
@@ -663,6 +629,8 @@ namespace RTUPointlistParse
             if (rows.Count == 0)
                 return rows;
 
+            int invalidRows = 0;
+            
             // Parse point numbers and sort
             var sortedRows = rows
                 .Where(r => r.Columns.Count >= 2)
@@ -671,10 +639,22 @@ namespace RTUPointlistParse
                     Row = r,
                     PointNum = int.TryParse(r.Columns[0], out int num) ? (int?)num : null
                 })
+                .Select(x => 
+                {
+                    if (!x.PointNum.HasValue)
+                        invalidRows++;
+                    return x;
+                })
                 .Where(x => x.PointNum.HasValue)  // Filter out invalid point numbers
                 .OrderBy(x => x.PointNum.Value)
                 .Select(x => x.Row)
                 .ToList();
+
+            // Log if any rows were filtered out
+            if (invalidRows > 0)
+            {
+                Console.WriteLine($"  Warning: Filtered out {invalidRows} row(s) with invalid point numbers");
+            }
 
             // Renumber sequentially starting from 1
             for (int i = 0; i < sortedRows.Count; i++)
