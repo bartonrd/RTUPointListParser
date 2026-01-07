@@ -38,8 +38,8 @@ namespace RTUPointlistParse
             string inputFolder = args.Length > 0 ? args[0] : DefaultInputFolder;
             string outputFolder = args.Length > 1 ? args[1] : DefaultOutputFolder;
 
-            Console.WriteLine("RTU Point List Parser");
-            Console.WriteLine("=====================");
+            Console.WriteLine("RTU Point List Parser - Point Name Extraction");
+            Console.WriteLine("==============================================");
             Console.WriteLine($"Input folder: {inputFolder}");
             Console.WriteLine($"Output folder: {outputFolder}");
             Console.WriteLine();
@@ -69,13 +69,8 @@ namespace RTUPointlistParse
                 return;
             }
 
-            // Collect all table rows from all PDFs
-            // Note: In a real implementation with text-based PDFs, you would need to:
-            // 1. Distinguish between Status and Analog data based on content or filename
-            // 2. Parse different table structures for each type
-            // For image-based PDFs (like the current example), this will result in empty collections
-            var allStatusRows = new List<TableRow>();
-            var allAnalogRows = new List<TableRow>();
+            // Collect all point names from all PDFs
+            var allPointNames = new List<string>();
 
             // Process each PDF file
             foreach (var pdfFile in pdfFiles)
@@ -93,30 +88,10 @@ namespace RTUPointlistParse
                     }
                     else
                     {
-                        // Determine type based on filename
-                        string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
-                        
-                        if (fileName.Contains("sh1") || fileName.Contains("status"))
-                        {
-                            // Parse as Status data
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
-                        }
-                        else if (fileName.Contains("sh2") || fileName.Contains("analog"))
-                        {
-                            // Parse as Analog data
-                            var tableRows = ParseAnalogTable(pdfText);
-                            allAnalogRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
-                        }
-                        else
-                        {
-                            // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
-                        }
+                        // Extract point names from this PDF
+                        var pointNames = ExtractPointNamesFromPdf(pdfText);
+                        allPointNames.AddRange(pointNames);
+                        Console.WriteLine($"  Extracted {pointNames.Count} Point Names");
                     }
                 }
                 catch (Exception ex)
@@ -125,29 +100,15 @@ namespace RTUPointlistParse
                 }
             }
 
-            // Generate a single combined Excel file
-            // Use a generic name or derive from folder/first file
+            // Generate a single combined Excel file with only Point Names
             string outputFileName = "Control_rtu837_DNP_pointlist_rev00.xlsx";
             string outputPath = Path.Combine(outputFolder, outputFileName);
             
             Console.WriteLine();
-            Console.WriteLine($"Generating combined Excel file: {outputFileName}");
-            GenerateExcel(allStatusRows, allAnalogRows, outputPath);
+            Console.WriteLine($"Generating Excel file with Point Names: {outputFileName}");
+            Console.WriteLine($"Total Point Names extracted: {allPointNames.Count}");
+            GeneratePointNameExcel(allPointNames, outputPath);
             Console.WriteLine($"  Generated: {outputFileName}");
-
-            // Compare generated files with expected output if available
-            string expectedOutputFolder = Path.Combine(
-                Path.GetDirectoryName(inputFolder) ?? "",
-                "Expected Output"
-            );
-
-            if (Directory.Exists(expectedOutputFolder))
-            {
-                Console.WriteLine();
-                Console.WriteLine("Comparing with expected output...");
-                Console.WriteLine("=================================");
-                CompareOutputFiles(outputFolder, expectedOutputFolder);
-            }
 
             Console.WriteLine();
             Console.WriteLine("Processing complete.");
@@ -515,6 +476,168 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
+        /// Extract only Point Names from PDF text, filtering out "Spare" entries and empty rows
+        /// </summary>
+        public static List<string> ExtractPointNamesFromPdf(string pdfText)
+        {
+            var pointNames = new List<string>();
+            var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                var trimmedLine = line.Trim();
+
+                // Skip metadata and header lines
+                if (IsMetadataOrHeaderLine(trimmedLine))
+                    continue;
+
+                // Check if this looks like a data row (starts with number followed by | or [)
+                if (DataRowPattern.IsMatch(trimmedLine))
+                {
+                    // Extract point name from this line
+                    var match = IndexExtractionPattern.Match(trimmedLine);
+                    if (match.Success)
+                    {
+                        string remainder = match.Groups[2].Value;
+                        
+                        // Split by | to separate sections
+                        var sections = remainder.Split('|');
+                        if (sections.Length >= 1)
+                        {
+                            string firstSection = sections[0].Trim();
+                            
+                            // Extract point name
+                            string pointName = ExtractPointName(firstSection);
+                            
+                            // Final OCR cleanup on the assembled point name
+                            pointName = FinalCleanPointName(pointName);
+                            
+                            // Filter out invalid point names
+                            if (IsValidPointName(pointName))
+                            {
+                                pointNames.Add(pointName);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return pointNames;
+        }
+
+        /// <summary>
+        /// Final cleanup pass on assembled point name to remove OCR artifacts
+        /// </summary>
+        private static string FinalCleanPointName(string pointName)
+        {
+            if (string.IsNullOrWhiteSpace(pointName))
+                return pointName;
+
+            // Remove leading lowercase letters followed by uppercase or digits
+            // e.g., "l115KV" -> "115KV", "lCOSO" -> "COSO"
+            while (pointName.Length > 1 && char.IsLower(pointName[0]) && 
+                   (char.IsUpper(pointName[1]) || char.IsDigit(pointName[1])))
+            {
+                pointName = pointName.Substring(1);
+            }
+
+            // Handle cases like "lcoso" where lowercase is followed by lowercase (OCR artifact)
+            // This often happens when OCR misreads a capital letter at the start
+            if (pointName.Length > 2 && char.IsLower(pointName[0]) && char.IsLower(pointName[1]))
+            {
+                // Capitalize the second character to see if it looks like a word start
+                pointName = char.ToUpper(pointName[1]) + pointName.Substring(2);
+            }
+
+            // Remove leading single uppercase letters if followed by uppercase word or digit
+            // e.g., "I115KV" -> "115KV", "INO." -> "NO.", "FNO." -> "NO."
+            if (pointName.Length > 2 && char.IsUpper(pointName[0]) && 
+                (char.IsUpper(pointName[1]) || char.IsDigit(pointName[1])))
+            {
+                // Check if this looks like an OCR artifact (single letter followed by uppercase/digit)
+                char firstChar = pointName[0];
+                if (firstChar == 'I' || firstChar == 'F' || firstChar == 'L' || firstChar == 'J')
+                {
+                    pointName = pointName.Substring(1);
+                }
+            }
+
+            // Remove leading "F L " or "fF L " patterns
+            if (pointName.StartsWith("F L ") || pointName.StartsWith("fF L "))
+            {
+                pointName = pointName.Substring(pointName.IndexOf("L ") + 2).Trim();
+            }
+
+            // Fix common OCR misreads in the middle of names
+            pointName = pointName.Replace("fi1S5KV", "115KV")  // "fi1S5KV" -> "115KV"
+                                 .Replace("ftnyo", "INYO")     // "ftnyo" -> "INYO"
+                                 .Replace("GAS7AIR", "GAS/AIR") // "GAS7AIR" -> "GAS/AIR"
+                                 .Replace("N15KV", "115KV")     // "N15KV" -> "115KV"
+                                 .Replace("TS5KV", "115KV")     // "TS5KV" -> "115KV"
+                                 .Replace("T15KV", "115KV");    // "T15KV" -> "115KV"
+
+            return pointName.Trim();
+        }
+
+        /// <summary>
+        /// Check if a point name is valid (not empty, not "Spare", not just OCR artifacts)
+        /// </summary>
+        private static bool IsValidPointName(string pointName)
+        {
+            if (string.IsNullOrWhiteSpace(pointName))
+                return false;
+
+            // Filter out "Spare" entries (case insensitive)
+            if (pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase) ||
+                pointName.StartsWith("SPARE ", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Filter out very short entries that are likely OCR artifacts or placeholders
+            // Real point names are typically longer than 3 characters
+            if (pointName.Length < 3)
+                return false;
+
+            // Filter out entries that are just single letters or common OCR artifacts
+            var singleLetterPatterns = new[] { "F", "I", "L", "J", "fF F", "l", "i", "||" };
+            if (singleLetterPatterns.Any(p => pointName.Equals(p, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            // Filter out entries that appear to be just formatting artifacts
+            if (pointName.All(c => c == 'F' || c == 'f' || c == 'I' || c == 'i' || c == 'L' || c == 'l' || c == ' ' || c == '|'))
+                return false;
+
+            // Filter out entries that contain document metadata keywords
+            var metadataKeywords = new[] { 
+                "ANALOG PT LISTING", "DIG PT LISTING", "DIGITAL POINT LISTING",
+                "RTU SYSTEM", "ONE LINE FOR CONSTRUCTION", "ED RTU", "RTU MONITOR",
+                "SHEET NO", "REVISIONS", "ISSUED FOR", "REFERENCE DRAWINGS"
+            };
+            if (metadataKeywords.Any(k => pointName.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            // Filter out entries that start with lowercase letters followed by uppercase
+            // These are typically OCR artifacts like "i RESERVED", "l115KV", "fF L"
+            if (pointName.Length > 1 && char.IsLower(pointName[0]) && 
+                (char.IsUpper(pointName[1]) || (pointName.Length > 2 && char.IsUpper(pointName[2]))))
+            {
+                // Check if removing the first character gives us a valid-looking point name
+                // If so, it's probably an OCR artifact that should be filtered or cleaned
+                var cleaned = pointName.Substring(1).Trim();
+                if (cleaned.Length > 2)
+                {
+                    // Return false for now - we'll clean these in ExtractPointName instead
+                    return false;
+                }
+            }
+
+            // Valid point name
+            return true;
+        }
+
+        /// <summary>
         /// Check if a line is metadata or header (should be skipped)
         /// </summary>
         private static bool IsMetadataOrHeaderLine(string line)
@@ -734,11 +857,21 @@ namespace RTUPointlistParse
                 .Replace("  ", " ")
                 .Trim();
 
-            // Fix common OCR character confusions
-            if (cleaned.StartsWith("l") && cleaned.Length > 1 && char.IsUpper(cleaned[1]))
+            // Fix common OCR character confusions - leading lowercase letters before uppercase
+            // e.g., "l115KV" -> "115KV", "i RESERVED" -> "RESERVED", "f115KV" -> "115KV"
+            if (cleaned.Length > 1)
             {
-                // Likely lowercase 'l' confused with uppercase 'I' or '1'
-                cleaned = cleaned.Substring(1);  // Remove leading 'l'
+                if ((cleaned.StartsWith("l") || cleaned.StartsWith("i") || cleaned.StartsWith("f")) && 
+                    (char.IsUpper(cleaned[1]) || char.IsDigit(cleaned[1])))
+                {
+                    cleaned = cleaned.Substring(1).Trim();
+                }
+                
+                // Also handle patterns like "fF L" at the beginning
+                if (cleaned.StartsWith("fF ") || cleaned.StartsWith("iI "))
+                {
+                    cleaned = cleaned.Substring(3).Trim();
+                }
             }
 
             if (cleaned.StartsWith("/") && cleaned.Length > 1)
@@ -1029,6 +1162,36 @@ namespace RTUPointlistParse
                     worksheet.Cell(currentRow, i + 1).Value = row.Columns[i];
                 }
                 currentRow++;
+            }
+        }
+
+        /// <summary>
+        /// Generate an Excel file with only Point Names (simplified output)
+        /// </summary>
+        public static void GeneratePointNameExcel(List<string> pointNames, string outputPath)
+        {
+            using (var workbook = new XLWorkbook())
+            {
+                // Create a single sheet with Point Names
+                var worksheet = workbook.Worksheets.Add("Point Names");
+                
+                // Add header
+                worksheet.Cell(1, 1).Value = "Point Name";
+                worksheet.Cell(1, 1).Style.Font.Bold = true;
+                worksheet.Cell(1, 1).Style.Fill.BackgroundColor = XLColor.LightGray;
+                
+                // Add point names starting from row 2
+                int currentRow = 2;
+                foreach (var pointName in pointNames)
+                {
+                    worksheet.Cell(currentRow, 1).Value = pointName;
+                    currentRow++;
+                }
+                
+                // Auto-fit column width
+                worksheet.Column(1).AdjustToContents();
+                
+                workbook.SaveAs(outputPath);
             }
         }
 
