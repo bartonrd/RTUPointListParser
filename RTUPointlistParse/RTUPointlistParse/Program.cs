@@ -17,6 +17,10 @@ namespace RTUPointlistParse
         private const string DEFAULT_NORMAL_STATE = "1";  // Default normal state value
         private const int POINT_NAME_COLUMN_INDEX = 2;  // Column index for point name (Status)
         private const int POINT_NAME_COLUMN_INDEX_ANALOG = 1;  // Column index for point name (Analog)
+        
+        // Constants for two-column layout detection
+        private const int MIN_SECOND_COLUMN_INDEX = 80;  // Minimum row index indicating second column
+        private const int MIN_CHAR_POSITION = 50;        // Minimum character position for second column split
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
@@ -31,6 +35,19 @@ namespace RTUPointlistParse
         private static readonly System.Text.RegularExpressions.Regex WhitespaceNormalizePattern =
             new System.Text.RegularExpressions.Regex(@"\s+", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex TwoColumnSplitPattern =
+            new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex TrailingSingleLetterPattern =
+            new System.Text.RegularExpressions.Regex(@"\s+[A-Z]$",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+        
+        // OCR artifact patterns
+        private static readonly HashSet<string> OcrNoisePatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "I", "F", "J", "L", "—", "=", "DI", "or"
+        };
+        private static readonly char[] LeadingOcrArtifacts = new[] { 'l', 'f', 'I' };
 
         public static void Main(string[] args)
         {
@@ -557,9 +574,7 @@ namespace RTUPointlistParse
             var result = new List<string>();
             
             // Look for pattern indicating second column: a number (typically 80-300) followed by [_|] that appears mid-line
-            // Pattern: "... some text ... [number][_|] more text ..."
-            var splitPattern = new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]");
-            var matches = splitPattern.Matches(line);
+            var matches = TwoColumnSplitPattern.Matches(line);
             
             if (matches.Count == 0)
             {
@@ -568,14 +583,14 @@ namespace RTUPointlistParse
                 return result;
             }
             
-            // Find the best split point - look for indices >= 80 which typically indicate second column
+            // Find the best split point - look for indices >= MIN_SECOND_COLUMN_INDEX which typically indicate second column
             int bestSplitIndex = -1;
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
                 if (int.TryParse(match.Groups[1].Value, out int rowIndex))
                 {
-                    // Second column typically starts at index 80 or higher
-                    if (rowIndex >= 80 && match.Index > 50)  // Must be past char position 50 to avoid false positives
+                    // Second column typically starts at index >= MIN_SECOND_COLUMN_INDEX
+                    if (rowIndex >= MIN_SECOND_COLUMN_INDEX && match.Index > MIN_CHAR_POSITION)
                     {
                         bestSplitIndex = match.Index;
                         break;
@@ -834,6 +849,8 @@ namespace RTUPointlistParse
             var tokens = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             var nameTokens = new List<string>();
             bool hasSeenMainContent = false;
+            bool justSawNo = false;
+            bool justSawBank = false;
 
             foreach (var token in tokens)
             {
@@ -856,18 +873,32 @@ namespace RTUPointlistParse
                     continue;
                 }
 
+                // Special case: allow numbers after "NO." or "BANK" (e.g., "NO. 1 BANK", "NO. 3 BANK")
+                if (justSawNo || justSawBank)
+                {
+                    if (int.TryParse(cleaned, out int num) && num >= 0 && num <= 10)
+                    {
+                        nameTokens.Add(cleaned);
+                        justSawNo = false;
+                        justSawBank = cleaned == "BANK";
+                        hasSeenMainContent = true;
+                        continue;
+                    }
+                }
+
                 // Skip standalone single-digit or two-digit numbers that appear after we've collected some content
-                if (hasSeenMainContent && int.TryParse(cleaned, out int num))
+                if (hasSeenMainContent && int.TryParse(cleaned, out int numVal))
                 {
                     // If this is a small standalone number and we already have content, stop
-                    if (cleaned.Length <= 2 && num < 200)
+                    if (cleaned.Length <= 2 && numVal < 200)
                     {
                         break;
                     }
                 }
 
                 // Skip tokens that are just numbers (unless part of a name like "NO. 1")
-                if (int.TryParse(cleaned, out _) && !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
+                if (int.TryParse(cleaned, out _) && !justSawNo && !justSawBank && 
+                    !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
                 {
                     // Allow small numbers that might be part of names only if we don't have content yet
                     if (cleaned.Length <= 2 && !hasSeenMainContent)
@@ -884,6 +915,8 @@ namespace RTUPointlistParse
                 {
                     nameTokens.Add(cleaned);
                     hasSeenMainContent = true;
+                    justSawNo = (cleaned == "NO." || cleaned.EndsWith("NO."));
+                    justSawBank = (cleaned == "BANK");
                 }
 
                 // Stop after collecting enough tokens (point names are usually 2-8 words)
@@ -956,6 +989,11 @@ namespace RTUPointlistParse
             cleaned = cleaned.Replace("fi1S", "115");  // OCR confusion
             cleaned = cleaned.Replace("fF", "");  // Remove OCR artifact
             cleaned = cleaned.Replace("cD", "CD");  // Fix lowercase
+            cleaned = cleaned.Replace("1155KV", "115KV");  // Fix OCR error
+            cleaned = cleaned.Replace("NYO", "INYO");  // Fix missing I
+            cleaned = cleaned.Replace("GAS7AIR", "GAS/AIR");  // Fix OCR
+            cleaned = cleaned.Replace("CSF", "CS");  // Remove trailing F artifact
+            cleaned = cleaned.Replace("CBF", "CB");  // Remove trailing F artifact
             
             return cleaned.Trim();
         }
