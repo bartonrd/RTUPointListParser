@@ -629,7 +629,7 @@ namespace RTUPointlistParse
             if (string.IsNullOrWhiteSpace(pointName))
                 return false;
             
-            // Filter out SPARE
+            // Filter out SPARE (keep the filtering as user specified)
             if (pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase))
                 return false;
             
@@ -646,7 +646,7 @@ namespace RTUPointlistParse
             if (pointName.Contains("LISTING") || pointName.Contains("CONSTRUCTION") || 
                 pointName.Contains("ADDED POINT") || pointName.Contains("SYSTEM") ||
                 pointName.Contains("REFERENCE") || pointName.Contains("SAP") ||
-                pointName.Contains("PLOT BY") || pointName.StartsWith("RESERVED FOR"))
+                pointName.Contains("PLOT BY"))
                 return false;
             
             return true;
@@ -704,8 +704,20 @@ namespace RTUPointlistParse
                 if (sections.Length < 1)
                     return null;
 
-                // First section contains the point name
-                string firstSection = sections[0].Trim();
+                // First non-empty section contains the point name
+                string firstSection = "";
+                foreach (var section in sections)
+                {
+                    var trimmedSection = section.Trim();
+                    if (!string.IsNullOrWhiteSpace(trimmedSection))
+                    {
+                        firstSection = trimmedSection;
+                        break;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(firstSection))
+                    return null;
 
                 // Extract point name (everything before certain keywords)
                 string pointName = ExtractPointName(firstSection);
