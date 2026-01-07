@@ -101,12 +101,12 @@ namespace RTUPointlistParse
                 {
                     Console.WriteLine($"Processing: {Path.GetFileName(pdfFile)}");
                     
-                    // Extract text from PDF
-                    string pdfText = ExtractTextFromPdf(pdfFile);
+                    // Use OCR + Geometry parser to extract Point Number and Point Name
+                    var tableRows = OcrGeometryParser.ParsePdfWithGeometry(pdfFile);
                     
-                    if (string.IsNullOrWhiteSpace(pdfText))
+                    if (tableRows.Count == 0)
                     {
-                        Console.WriteLine($"  Warning: No text extracted from PDF. The PDF may be image-based.");
+                        Console.WriteLine($"  Warning: No data extracted from PDF.");
                     }
                     else
                     {
@@ -115,22 +115,19 @@ namespace RTUPointlistParse
                         
                         if (fileName.Contains("sh1") || fileName.Contains("status"))
                         {
-                            // Parse as Status data
-                            var tableRows = ParseStatusTable(pdfText);
+                            // Add as Status data
                             allStatusRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
                         }
                         else if (fileName.Contains("sh2") || fileName.Contains("analog"))
                         {
-                            // Parse as Analog data
-                            var tableRows = ParseAnalogTable(pdfText);
+                            // Add as Analog data
                             allAnalogRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
                         }
                         else
                         {
-                            // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
+                            // Unknown type - add as status
                             allStatusRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
                         }
