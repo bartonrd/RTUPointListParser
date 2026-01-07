@@ -193,6 +193,12 @@ namespace RTUPointlistParse
                     var tables = DetectTableHeaders(words);
                     log.AppendLine($"    Page {pageNum}: Detected {tables.Count} table(s)");
                     
+                    // Log table positions for debugging
+                    foreach (var table in tables)
+                    {
+                        log.AppendLine($"      Table: PointNum@X={table.PointNumberHeaderX}, PointName@X={table.PointNameHeaderX}, HeaderY={table.HeaderY}");
+                    }
+                    
                     // Step 4-6: Extract points from each table
                     foreach (var table in tables)
                     {
