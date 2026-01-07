@@ -455,20 +455,31 @@ namespace RTUPointlistParse
                 if (IsMetadataOrHeaderLine(trimmedLine))
                     continue;
 
-                // Check if this looks like a data row (starts with number followed by | or [)
-                if (DataRowPattern.IsMatch(trimmedLine))
+                // Split two-column layout if present
+                // PDFs may have two columns side-by-side that OCR reads as one line
+                // Look for pattern like: "... 80 | POINT_NAME ..." which indicates second column start
+                var columnLines = SplitTwoColumnLayout(trimmedLine);
+
+                foreach (var columnLine in columnLines)
                 {
-                    // Parse this as a status data row - extract only Point Number and Point Name
-                    var parsedRow = ParseSimpleDataRow(trimmedLine, pointNumber);
-                    if (parsedRow != null)
+                    if (string.IsNullOrWhiteSpace(columnLine))
+                        continue;
+
+                    // Check if this looks like a data row (starts with number followed by | or [)
+                    if (DataRowPattern.IsMatch(columnLine))
                     {
-                        string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                        
-                        // Filter out empty rows and rows where Point Name contains "Spare"
-                        if (IsValidPointName(pointName))
+                        // Parse this as a status data row - extract only Point Number and Point Name
+                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
+                        if (parsedRow != null)
                         {
-                            rows.Add(parsedRow);
-                            pointNumber++;
+                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
+                            
+                            // Filter out empty rows and rows where Point Name contains "Spare"
+                            if (IsValidPointName(pointName))
+                            {
+                                rows.Add(parsedRow);
+                                pointNumber++;
+                            }
                         }
                     }
                 }
@@ -498,20 +509,29 @@ namespace RTUPointlistParse
                 if (IsMetadataOrHeaderLine(trimmedLine))
                     continue;
 
-                // Check if this looks like a data row
-                if (DataRowPattern.IsMatch(trimmedLine))
+                // Split two-column layout if present
+                var columnLines = SplitTwoColumnLayout(trimmedLine);
+
+                foreach (var columnLine in columnLines)
                 {
-                    // Parse this as an analog data row - extract only Point Number and Point Name
-                    var parsedRow = ParseSimpleDataRow(trimmedLine, pointNumber);
-                    if (parsedRow != null)
+                    if (string.IsNullOrWhiteSpace(columnLine))
+                        continue;
+
+                    // Check if this looks like a data row
+                    if (DataRowPattern.IsMatch(columnLine))
                     {
-                        string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
-                        
-                        // Filter out empty rows and rows where Point Name contains "Spare"
-                        if (IsValidPointName(pointName))
+                        // Parse this as an analog data row - extract only Point Number and Point Name
+                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
+                        if (parsedRow != null)
                         {
-                            rows.Add(parsedRow);
-                            pointNumber++;
+                            string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
+                            
+                            // Filter out empty rows and rows where Point Name contains "Spare"
+                            if (IsValidPointName(pointName))
+                            {
+                                rows.Add(parsedRow);
+                                pointNumber++;
+                            }
                         }
                     }
                 }
@@ -529,6 +549,61 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
+        /// Split a line that contains two-column layout data into separate column lines
+        /// OCR may read two table columns side-by-side as a single line
+        /// </summary>
+        private static List<string> SplitTwoColumnLayout(string line)
+        {
+            var result = new List<string>();
+            
+            // Look for pattern indicating second column: a number (typically 80-300) followed by [_|] that appears mid-line
+            // Pattern: "... some text ... [number][_|] more text ..."
+            var splitPattern = new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]");
+            var matches = splitPattern.Matches(line);
+            
+            if (matches.Count == 0)
+            {
+                // No second column detected, return original line
+                result.Add(line);
+                return result;
+            }
+            
+            // Find the best split point - look for indices >= 80 which typically indicate second column
+            int bestSplitIndex = -1;
+            foreach (System.Text.RegularExpressions.Match match in matches)
+            {
+                if (int.TryParse(match.Groups[1].Value, out int rowIndex))
+                {
+                    // Second column typically starts at index 80 or higher
+                    if (rowIndex >= 80 && match.Index > 50)  // Must be past char position 50 to avoid false positives
+                    {
+                        bestSplitIndex = match.Index;
+                        break;
+                    }
+                }
+            }
+            
+            if (bestSplitIndex > 0)
+            {
+                // Split at this point
+                string leftColumn = line.Substring(0, bestSplitIndex).Trim();
+                string rightColumn = line.Substring(bestSplitIndex).Trim();
+                
+                if (!string.IsNullOrWhiteSpace(leftColumn))
+                    result.Add(leftColumn);
+                if (!string.IsNullOrWhiteSpace(rightColumn))
+                    result.Add(rightColumn);
+            }
+            else
+            {
+                // No valid split point found, return original
+                result.Add(line);
+            }
+            
+            return result;
+        }
+
+        /// <summary>
         /// Check if a point name is valid (not empty and does not contain "Spare")
         /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
         /// </summary>
@@ -536,8 +611,30 @@ namespace RTUPointlistParse
         /// <returns>True if the point name is valid, false otherwise</returns>
         private static bool IsValidPointName(string pointName)
         {
-            return !string.IsNullOrWhiteSpace(pointName) && 
-                   !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(pointName))
+                return false;
+            
+            // Filter out SPARE
+            if (pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase))
+                return false;
+            
+            // Filter out single characters or very short OCR artifacts
+            if (pointName.Length <= 2)
+                return false;
+            
+            // Filter out common OCR noise patterns
+            if (pointName == "I" || pointName == "F" || pointName == "J" || pointName == "L" ||
+                pointName == "—" || pointName == "=" || pointName == "DI" || pointName == "or")
+                return false;
+            
+            // Filter out reference/metadata lines
+            if (pointName.Contains("LISTING") || pointName.Contains("CONSTRUCTION") || 
+                pointName.Contains("ADDED POINT") || pointName.Contains("SYSTEM") ||
+                pointName.Contains("REFERENCE") || pointName.Contains("SAP") ||
+                pointName.Contains("PLOT BY") || pointName.StartsWith("RESERVED FOR"))
+                return false;
+            
+            return true;
         }
 
         /// <summary>
@@ -736,6 +833,7 @@ namespace RTUPointlistParse
 
             var tokens = text.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             var nameTokens = new List<string>();
+            bool hasSeenMainContent = false;
 
             foreach (var token in tokens)
             {
@@ -758,18 +856,37 @@ namespace RTUPointlistParse
                     continue;
                 }
 
+                // Skip standalone single-digit or two-digit numbers that appear after we've collected some content
+                if (hasSeenMainContent && int.TryParse(cleaned, out int num))
+                {
+                    // If this is a small standalone number and we already have content, stop
+                    if (cleaned.Length <= 2 && num < 200)
+                    {
+                        break;
+                    }
+                }
+
                 // Skip tokens that are just numbers (unless part of a name like "NO. 1")
                 if (int.TryParse(cleaned, out _) && !nameTokens.Contains("NO.") && !nameTokens.Contains("PLANT"))
                 {
-                    // Allow small numbers that might be part of names
-                    if (cleaned.Length <= 2)
+                    // Allow small numbers that might be part of names only if we don't have content yet
+                    if (cleaned.Length <= 2 && !hasSeenMainContent)
+                    {
                         nameTokens.Add(cleaned);
-                    break;  // Stop after first standalone number
+                        hasSeenMainContent = true;
+                    }
+                    else
+                    {
+                        break;  // Stop at standalone numbers
+                    }
+                }
+                else
+                {
+                    nameTokens.Add(cleaned);
+                    hasSeenMainContent = true;
                 }
 
-                nameTokens.Add(cleaned);
-
-                // Stop after collecting enough tokens (point names are usually 2-6 words)
+                // Stop after collecting enough tokens (point names are usually 2-8 words)
                 if (nameTokens.Count >= MAX_POINT_NAME_TOKENS)
                     break;
             }
@@ -779,6 +896,9 @@ namespace RTUPointlistParse
             // Final cleanup
             result = result.Replace("  ", " ");  // Remove double spaces
             result = WhitespaceNormalizePattern.Replace(result, " ");  // Normalize whitespace
+            
+            // Remove trailing single letters that are OCR artifacts (like "I", "F", "J")
+            result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+[A-Z]$", "").Trim();
             
             return result;
         }
@@ -803,11 +923,12 @@ namespace RTUPointlistParse
                 .Replace("  ", " ")
                 .Trim();
 
-            // Fix common OCR character confusions
-            if (cleaned.StartsWith("l") && cleaned.Length > 1 && char.IsUpper(cleaned[1]))
+            // Fix common OCR character confusions at the beginning
+            // Remove leading lowercase 'l' or 'f' or 'I' that are likely artifacts
+            while (cleaned.Length > 1 && (cleaned[0] == 'l' || cleaned[0] == 'f' || cleaned[0] == 'I') && 
+                   char.IsUpper(cleaned[1]))
             {
-                // Likely lowercase 'l' confused with uppercase 'I' or '1'
-                cleaned = cleaned.Substring(1);  // Remove leading 'l'
+                cleaned = cleaned.Substring(1);
             }
 
             if (cleaned.StartsWith("/") && cleaned.Length > 1)
@@ -819,6 +940,22 @@ namespace RTUPointlistParse
             // Replace common character confusions
             cleaned = cleaned.Replace("I'", "1 ");
             cleaned = cleaned.Replace("Il", "11");
+            cleaned = cleaned.Replace("Tn", "11");  // Common OCR confusion
+            cleaned = cleaned.Replace("T15KV", "115KV");  // Specific OCR fix
+            cleaned = cleaned.Replace("FTRANS", "TRANS");  // Remove leading F
+            cleaned = cleaned.Replace("TS5KV", "115KV");  // Another OCR confusion
+            cleaned = cleaned.Replace("IN15KV", "115KV");  // Another variation
+            cleaned = cleaned.Replace("N15KV", "115KV");  // Another variation
+            cleaned = cleaned.Replace("ftnyo", "INYO");  // Specific OCR fix
+            cleaned = cleaned.Replace("WWIXIE", "DIXIE");  // Specific OCR fix
+            cleaned = cleaned.Replace("FINO", "NO");  // Remove leading F
+            cleaned = cleaned.Replace("FNO", "NO");  // Remove leading F
+            cleaned = cleaned.Replace("INO", "NO");  // Remove leading I
+            cleaned = cleaned.Replace("FCASA", "CASA");  // Remove leading F
+            cleaned = cleaned.Replace("ICASA", "CASA");  // Remove leading I
+            cleaned = cleaned.Replace("fi1S", "115");  // OCR confusion
+            cleaned = cleaned.Replace("fF", "");  // Remove OCR artifact
+            cleaned = cleaned.Replace("cD", "CD");  // Fix lowercase
             
             return cleaned.Trim();
         }
