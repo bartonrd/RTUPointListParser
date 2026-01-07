@@ -8,12 +8,25 @@ using ClosedXML.Excel;
 namespace RTUPointlistParse;
 
 public record OcrWord(string Text, Rectangle Bounds, float Confidence);
-public record RowCluster(int Y, List<OcrWord> Words);
+
+public class RowCluster
+{
+    public int Y { get; set; }
+    public List<OcrWord> Words { get; set; } = new();
+    
+    public RowCluster(int y, List<OcrWord> words)
+    {
+        Y = y;
+        Words = words;
+    }
+}
 
 public class App
 {
     private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
     private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+    private const string TessDataEnvVarName = "TESSDATA_DIR";
+    private const string TessLangEnvVarName = "TESSERACT_LANG";
 
     private readonly List<string> logLines = new();
 
@@ -129,8 +142,9 @@ public class App
         Log($"Excel output: {xlsxPath}");
 
         // Write log
+        var logPath = Path.Combine(outputFolder, "PointList.log.txt");
+        Log($"Log output: {logPath}");
         WriteLog(outputFolder, logLines);
-        Log($"Log output: {Path.Combine(outputFolder, "PointList.log.txt")}");
 
         return 0;
     }
@@ -154,7 +168,7 @@ public class App
             using var document = PdfDocument.Load(pdfPath);
             for (int i = 0; i < document.PageCount; i++)
             {
-                var image = document.Render(i, dpi, dpi, false);
+                using var image = document.Render(i, dpi, dpi, false);
                 bitmaps.Add(new Bitmap(image));
             }
         }
@@ -354,7 +368,7 @@ public class App
     public static async Task Main(string[] args)
     {
         var app = new App();
-        var exitCode = await app.RunAsync(DefaultInputFolder, DefaultOutputFolder, "TESSDATA_DIR", "TESSERACT_LANG");
+        var exitCode = await app.RunAsync(DefaultInputFolder, DefaultOutputFolder, TessDataEnvVarName, TessLangEnvVarName);
         Environment.Exit(exitCode);
     }
 }
