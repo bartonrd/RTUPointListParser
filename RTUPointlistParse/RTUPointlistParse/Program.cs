@@ -7,8 +7,8 @@ namespace RTUPointlistParse
 {
     public class Program
     {
-        private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
-        private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+        private const string DefaultInputFolder = "ExamplePointlists/Example1/Input";
+        private const string DefaultOutputFolder = "ExamplePointlists/Example1/TestOutput";
 
         // Constants for data parsing
         private const string DEFAULT_AOR_VALUE = "43";  // Default Area of Responsibility
@@ -461,8 +461,14 @@ namespace RTUPointlistParse
                     var parsedRow = ParseStatusDataRow(trimmedLine, tabIndex);
                     if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX]))
                     {
-                        rows.Add(parsedRow);
-                        tabIndex++;
+                        // Filter out "Spare" entries (case-insensitive, including variations)
+                        string pointName = parsedRow.Columns[POINT_NAME_COLUMN_INDEX].Trim();
+                        if (!pointName.StartsWith("SPARE", StringComparison.OrdinalIgnoreCase) &&
+                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        {
+                            rows.Add(parsedRow);
+                            tabIndex++;
+                        }
                     }
                 }
             }
@@ -497,8 +503,14 @@ namespace RTUPointlistParse
                     var parsedRow = ParseAnalogDataRow(trimmedLine, tabIndex);
                     if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX_ANALOG && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX_ANALOG]))
                     {
-                        rows.Add(parsedRow);
-                        tabIndex++;
+                        // Filter out "Spare" entries (case-insensitive, including variations)
+                        string pointName = parsedRow.Columns[POINT_NAME_COLUMN_INDEX_ANALOG].Trim();
+                        if (!pointName.StartsWith("SPARE", StringComparison.OrdinalIgnoreCase) &&
+                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        {
+                            rows.Add(parsedRow);
+                            tabIndex++;
+                        }
                     }
                 }
             }
@@ -890,145 +902,54 @@ namespace RTUPointlistParse
         private static void CreateStatusSheet(IXLWorksheet worksheet, List<TableRow> rows)
         {
             // Add header
-            worksheet.Cell(1, 1).Value = "CONTRL_D DNP Status Point List";
+            worksheet.Cell(1, 1).Value = "Status Point Names";
             worksheet.Cell(1, 1).Style.Font.Bold = true;
 
-            // Add metadata rows (simplified version)
+            // Add column header
             int currentRow = 3;
-            worksheet.Cell(currentRow, 1).Value = "LOCATION: ";
-            worksheet.Cell(currentRow, 5).Value = "RTU/DEVICE TYPE: ";
-            worksheet.Cell(currentRow, 10).Value = "STA DC VOLTAGE: ";
-            worksheet.Cell(currentRow, 23).Value = "NOTE: ";
+            worksheet.Cell(currentRow, 1).Value = "POINT NAME";
+            worksheet.Cell(currentRow, 1).Style.Font.Bold = true;
 
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "DATE:";
-            worksheet.Cell(currentRow, 5).Value = "EMS DEVICE NUM: ";
-            worksheet.Cell(currentRow, 10).Value = "POINTLIST REVISION: ";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "DEVICE NAME: ";
-            worksheet.Cell(currentRow, 5).Value = "RTU/SAS DNP ADDRESS: ";
-            worksheet.Cell(currentRow, 10).Value = "A SYSTEM:  ";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "TDBU SAP: ";
-            worksheet.Cell(currentRow, 5).Value = "PSC ENGINEER:  ";
-            worksheet.Cell(currentRow, 10).Value = "SWITCHING CENTER:  ";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "PSC SAP: ";
-            worksheet.Cell(currentRow, 5).Value = "CRQ NUMBER:  ";
-            worksheet.Cell(currentRow, 10).Value = "BES ASSET:  ";
-            worksheet.Cell(currentRow, 23).Value = "TESTING HISTORY";
-
-            // Add column headers
-            currentRow += 2;
-            worksheet.Cell(currentRow, 2).Value = "CONTROL ADDRESS ";
-            worksheet.Cell(currentRow, 4).Value = "STATUS STATE PAIR INFO ";
-            worksheet.Cell(currentRow, 7).Value = "ALARMS  ";
-            worksheet.Cell(currentRow, 12).Value = "CROSS REFERENCE EXISTING EMS DATA ";
-            worksheet.Cell(currentRow, 16).Value = "TAB-1 BASED ";
-            worksheet.Cell(currentRow, 17).Value = "IED INFORMATION ";
-
-            currentRow += 2;
-            var headers = new[] {
-                "TAB DEC DNP INDEX", "0 BASED CONTROL ADDRESS", "POINT NAME                    ",
-                "NORMAL STATE", "1_STATE", "0_STATE", "AOR", " DOG_1 /3  ", "  DOG_2 /4   ",
-                "EMS TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME", "EXISTING POINT NAME",
-                "EXISTING TAB NUM", "ITEM  ", "CONTROL  ADDRESS", "LAN     (CARD_PORT)",
-                "IED ADDRESS", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    "
-            };
-
-            for (int i = 0; i < headers.Length; i++)
-            {
-                worksheet.Cell(currentRow, i + 1).Value = headers[i];
-                worksheet.Cell(currentRow, i + 1).Style.Font.Bold = true;
-            }
-
-            // Add data rows from parsed table
+            // Add data rows - only Point Name column (index 2 in Status rows)
             currentRow++;
             foreach (var row in rows)
             {
-                for (int i = 0; i < Math.Min(row.Columns.Count, headers.Length); i++)
+                if (row.Columns.Count > POINT_NAME_COLUMN_INDEX)
                 {
-                    worksheet.Cell(currentRow, i + 1).Value = row.Columns[i];
+                    string pointName = row.Columns[POINT_NAME_COLUMN_INDEX];
+                    if (!string.IsNullOrWhiteSpace(pointName))
+                    {
+                        worksheet.Cell(currentRow, 1).Value = pointName;
+                        currentRow++;
+                    }
                 }
-                currentRow++;
             }
         }
 
         private static void CreateAnalogSheet(IXLWorksheet worksheet, List<TableRow> rows)
         {
             // Add header
-            worksheet.Cell(1, 1).Value = "CONTRL_D  DNP Analog Point List";
+            worksheet.Cell(1, 1).Value = "Analog Point Names";
             worksheet.Cell(1, 1).Style.Font.Bold = true;
 
-            // Add metadata rows (simplified version)
+            // Add column header
             int currentRow = 3;
-            worksheet.Cell(currentRow, 1).Value = "LOCATION:  ";
-            worksheet.Cell(currentRow, 5).Value = "RTU/DEVICE MODEL: ";
-            worksheet.Cell(currentRow, 10).Value = "STA DC VOLTAGE: ";
-            worksheet.Cell(currentRow, 18).Value = "NOTE: ";
+            worksheet.Cell(currentRow, 1).Value = "POINT NAME";
+            worksheet.Cell(currentRow, 1).Style.Font.Bold = true;
 
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "DATE: ";
-            worksheet.Cell(currentRow, 5).Value = "EMS DEVICE NUM: ";
-            worksheet.Cell(currentRow, 10).Value = "POINTLIST REVISION: ";
-            worksheet.Cell(currentRow, 18).Value = "All fullscale and limits are true values";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "DEVICE NAME: ";
-            worksheet.Cell(currentRow, 5).Value = "RTU/SAS ADDRESS: ";
-            worksheet.Cell(currentRow, 10).Value = "A SYSTEM: ";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "TDBU SAP: ";
-            worksheet.Cell(currentRow, 5).Value = "PSC ENGINEER:  ";
-            worksheet.Cell(currentRow, 10).Value = "SWITCHING CENTER: ";
-
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "PSC SAP: ";
-            worksheet.Cell(currentRow, 5).Value = "PSC TECHENICIAN:  ";
-            worksheet.Cell(currentRow, 10).Value = "TESTMAN: ";
-
-            // Add column group headers
-            currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "EMS DATABASE INFORMATION ";
-            worksheet.Cell(currentRow, 14).Value = "CROSS REFERENCE INFORMATION ";
-            worksheet.Cell(currentRow, 17).Value = "FIELD INFORMATION ";
-
-            currentRow++;
-            worksheet.Cell(currentRow, 3).Value = "SCALING ";
-            worksheet.Cell(currentRow, 5).Value = "FULL SCALE ";
-            worksheet.Cell(currentRow, 7).Value = "LIMITS ";
-            worksheet.Cell(currentRow, 9).Value = "ALARMS ";
-            worksheet.Cell(currentRow, 14).Value = "EXISTING EMS DATA ";
-            worksheet.Cell(currentRow, 17).Value = "IED  INFORMATION ";
-
-            currentRow++;
-            var headers = new[] {
-                "TAB DEC DNP INDEX", "POINT NAME", "COEFFICIENT", "OFFSET", "VALUE", "UNIT",
-                "LOW LIMIT", "HIGH LIMIT", "       AOR        ", "       DOG_1/3        ",
-                "    DOG_2/4     ", "EMS_TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME",
-                "EXISTING POINT NAME", "EXISTING TAB NUM", "ITEM", "LAN_CARD-PORT",
-                "IED_ADDRESS", "I/O_REGISTER_or DNP_INDEX"
-            };
-
-            for (int i = 0; i < headers.Length; i++)
-            {
-                worksheet.Cell(currentRow, i + 1).Value = headers[i];
-                worksheet.Cell(currentRow, i + 1).Style.Font.Bold = true;
-            }
-
-            // Add data rows from parsed table
+            // Add data rows - only Point Name column (index 1 in Analog rows)
             currentRow++;
             foreach (var row in rows)
             {
-                for (int i = 0; i < Math.Min(row.Columns.Count, headers.Length); i++)
+                if (row.Columns.Count > POINT_NAME_COLUMN_INDEX_ANALOG)
                 {
-                    worksheet.Cell(currentRow, i + 1).Value = row.Columns[i];
+                    string pointName = row.Columns[POINT_NAME_COLUMN_INDEX_ANALOG];
+                    if (!string.IsNullOrWhiteSpace(pointName))
+                    {
+                        worksheet.Cell(currentRow, 1).Value = pointName;
+                        currentRow++;
+                    }
                 }
-                currentRow++;
             }
         }
 
