@@ -1,13 +1,16 @@
 # RTU Point List Parser
 
-A C# .NET Console Application for parsing RTU point list data from PDF files and generating Excel (.xlsx) output files.
+A C# .NET Console Application for parsing RTU point list data from **image-based PDF files** and generating Excel (.xlsx) output files with sequential point numbering.
 
 ## Features
 
-- **PDF Text Extraction**: Extracts text from PDF files using PdfPig library
+- **Image-Based PDF Processing**: Handles scanned/image-based PDF files using OCR technology
+- **Multi-Page Support**: Processes PDFs with any number of pages
+- **Multi-Table Support**: Extracts data from all tables in all PDFs
+- **PDF Text Extraction**: Extracts text from PDF files using PdfPig library with OCR fallback
+- **Sequential Point Numbering**: Automatically sorts and renumbers points from 1 to N
 - **Table Parsing**: Converts extracted text into structured table data
 - **Excel Generation**: Creates formatted .xlsx files with Status and Analog sheets using ClosedXML
-- **File Comparison**: Compares generated Excel files against expected output
 - **Batch Processing**: Processes all PDF files in the input folder and combines them into a single output
 
 ## Usage
@@ -21,9 +24,9 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 ### Parameters
 
 - `inputFolder` (optional): Path to folder containing PDF files to parse
-  - Default: `ExamplePointlists/Example1/Input`
+  - Default: `C:\dev\RTUPointListParser\ExamplePointlists\Example1\Input`
 - `outputFolder` (optional): Path to folder where Excel files will be saved
-  - Default: `ExamplePointlists/Example1/TestOutput`
+  - Default: `C:\dev\RTUPointListParser\ExamplePointlists\Example1\TestOutput`
 
 ### Examples
 
@@ -39,41 +42,51 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 
 ## Output Format
 
-The application generates Excel files with two worksheets, each containing only the essential point identification columns:
+The application generates a single Excel file containing data from all processed PDFs, with two worksheets:
 
 ### Status Sheet
 Contains DNP status point list data with columns:
-- **Point Number**: Sequential index for each point (0-based)
+- **Point Number**: Sequential number from 1 to N
 - **Point Name**: Name/description of the status point
 
 ### Analog Sheet
 Contains DNP analog point list data with columns:
-- **Point Number**: Sequential index for each point (0-based)
+- **Point Number**: Sequential number from 1 to N
 - **Point Name**: Name/description of the analog point
 
-**Note**: The parser automatically filters out:
-- Empty rows
-- Rows where the Point Name is "Spare" or "SPARE"
+**Note**: 
+- The parser automatically extracts Point Number from the PDF files
+- Points are sorted by their original number and then renumbered sequentially starting from 1
+- All points are included (including Spare entries)
+- The Point Number column in PDFs has "Point" stacked above "Number" in the header
 
 ## Helper Methods
 
 The application implements the following key helper methods:
 
 ### `ExtractTextFromPdf(string filePath)`
-Extracts text content from a PDF file using PdfPig library.
+Extracts text content from a PDF file using PdfPig library. If no text is found (image-based PDF), automatically falls back to OCR.
 
 **Parameters:**
 - `filePath`: Full path to the PDF file
 
-**Returns:** String containing extracted text
+**Returns:** String containing extracted text from all pages
 
-### `ParseTable(string pdfText)`
-Parses table data from extracted PDF text into structured rows, extracting only Point Number and Point Name columns.
+### `ParseStatusTable(string pdfText)` and `ParseAnalogTable(string pdfText)`
+Parses table data from extracted PDF text into structured rows, extracting Point Number and Point Name columns.
 
 **Parameters:**
 - `pdfText`: Text extracted from PDF
 
-**Returns:** List of `TableRow` objects containing only Point Number and Point Name
+**Returns:** List of `TableRow` objects containing Point Number and Point Name
+
+### `SortAndRenumberRows(List<TableRow> rows)`
+Sorts rows by their extracted point number and renumbers them sequentially starting from 1.
+
+**Parameters:**
+- `rows`: List of table rows to sort and renumber
+
+**Returns:** Sorted and renumbered list of rows
 
 ### `GenerateExcel(List<TableRow> statusRows, List<TableRow> analogRows, string outputPath)`
 Creates an Excel (.xlsx) file with Status and Analog sheets, each containing Point Number and Point Name columns.
@@ -82,15 +95,6 @@ Creates an Excel (.xlsx) file with Status and Analog sheets, each containing Poi
 - `statusRows`: Data rows for Status sheet (Point Number and Point Name)
 - `analogRows`: Data rows for Analog sheet (Point Number and Point Name)
 - `outputPath`: Full path where Excel file will be saved
-
-### `CompareExcelFiles(string generatedFile, string expectedFile)`
-Compares two Excel files and reports differences.
-
-**Parameters:**
-- `generatedFile`: Path to generated Excel file
-- `expectedFile`: Path to expected Excel file
-
-**Returns:** Boolean indicating if files match
 
 ## Libraries Used
 
@@ -175,10 +179,41 @@ Processing: Control115_sh1_145934779.pdf
 
 When run with the Example1 data, the application will:
 
-1. Process all PDF files in `ExamplePointlists/Example1/Input`
-2. Generate `Control_rtu837_DNP_pointlist_rev00.xlsx` in `ExamplePointlists/Example1/TestOutput`
-3. Compare the generated file with the expected output in `ExamplePointlists/Example1/Expected Output`
-4. Display a summary of any differences found
+1. Process all PDF files in the input folder (e.g., `Control115_sh1_145934779.pdf`, `Control115_sh2_145937196.pdf`)
+2. Use OCR to extract text from image-based PDFs
+3. Parse Point Number and Point Name from all tables in all pages
+4. Sort points by their extracted number and renumber sequentially from 1 to N
+5. Generate `Control_rtu837_DNP_pointlist_rev00.xlsx` in the output folder with:
+   - **Status Sheet**: Sequential points with Point Number (1-N) and Point Name
+   - **Analog Sheet**: Sequential points with Point Number (1-N) and Point Name
+
+Sample console output:
+```
+RTU Point List Parser
+=====================
+Input folder: ExamplePointlists/Example1/Input
+Output folder: ExamplePointlists/Example1/TestOutput
+
+Found 2 PDF file(s) to process
+
+Processing: Control115_sh2_145937196.pdf
+  No text found, attempting OCR...
+  Performing OCR on PDF...
+  OCR completed on 1 page(s)
+  Extracted 40 Analog rows
+Processing: Control115_sh1_145934779.pdf
+  No text found, attempting OCR...
+  Performing OCR on PDF...
+  OCR completed on 1 page(s)
+  Extracted 72 Status rows
+
+Generating combined Excel file: Control_rtu837_DNP_pointlist_rev00.xlsx
+  Status points: 72
+  Analog points: 40
+  Generated: Control_rtu837_DNP_pointlist_rev00.xlsx
+
+Processing complete.
+```
 
 ## Building
 
