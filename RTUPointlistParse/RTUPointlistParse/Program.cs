@@ -16,7 +16,7 @@ namespace RTUPointlistParse
         private const double HEADER_Y_GAP_TOLERANCE = 20.0; // pixels for stacked headers
         private const double ROW_Y_TOLERANCE = 10.0;  // pixels for grouping words into rows
         private const int COL1_EXPAND = 15;  // expand column 1 band
-        private const int COL2_EXPAND = 30;  // expand column 2 band
+        private const int COL2_EXPAND = 100;  // expand column 2 band (wider to capture full names)
         
         private static readonly Regex NumericPattern = new Regex(@"^\d+$", RegexOptions.Compiled);
         
@@ -405,11 +405,11 @@ namespace RTUPointlistParse
         {
             var points = new List<PointData>();
             
-            // Define column bands
+            // Define column bands more precisely
             int col1MinX = table.PointNumberHeaderX - COL1_EXPAND;
             int col1MaxX = table.PointNumberHeaderX + table.PointNumberHeaderWidth + COL1_EXPAND;
             int col2MinX = table.PointNameHeaderX - COL2_EXPAND;
-            int col2MaxX = table.PointNameHeaderX + table.PointNameHeaderWidth + COL2_EXPAND;
+            int col2MaxX = table.PointNameHeaderX + table.PointNameHeaderWidth + (COL2_EXPAND * 3); // Wider on the right
             
             // Get words below the header
             var dataWords = words.Where(w => w.Y > table.HeaderY + 20).ToList();
@@ -431,16 +431,39 @@ namespace RTUPointlistParse
                 if (!int.TryParse(numberWord.Text, out int pointNumber))
                     continue;
                 
-                // Extract Point Name: words in col2 band OR to the right of Point Number
+                // Extract Point Name: words within the Point Name column band
                 var nameWords = row.Where(w =>
-                    (w.X >= col2MinX && w.X <= col2MaxX) ||
-                    w.X > numberWord.X + numberWord.Width).ToList();
+                    w.X >= col2MinX && w.X <= col2MaxX).OrderBy(w => w.X).ToList();
                 
                 if (nameWords.Count == 0)
                     continue;
                 
-                // Sort left to right and concatenate
-                string pointName = string.Join(" ", nameWords.OrderBy(w => w.X).Select(w => w.Text));
+                // Concatenate words intelligently
+                var nameTokens = new List<string>();
+                int lastX = col2MinX;
+                bool foundMainName = false;
+                
+                foreach (var word in nameWords)
+                {
+                    // Skip if too far from previous word (indicates column break)
+                    if (foundMainName && (word.X - lastX > 300))
+                        break;
+                    
+                    // Skip pure numeric after we have name content (likely next column data)
+                    if (foundMainName && NumericPattern.IsMatch(word.Text) && word.Text.Length <= 2)
+                        break;
+                    
+                    // Add word
+                    nameTokens.Add(word.Text);
+                    lastX = word.X + word.Width;
+                    foundMainName = true;
+                    
+                    // Limit total tokens
+                    if (nameTokens.Count >= 15)
+                        break;
+                }
+                
+                string pointName = string.Join(" ", nameTokens).Trim();
                 
                 if (string.IsNullOrWhiteSpace(pointName))
                     continue;
@@ -450,14 +473,40 @@ namespace RTUPointlistParse
                     pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase))
                     continue;
                 
+                // Clean up common OCR artifacts
+                pointName = CleanPointName(pointName);
+                
+                if (string.IsNullOrWhiteSpace(pointName) || pointName.Length <= 2)
+                    continue;
+                
                 points.Add(new PointData
                 {
                     PointNumber = pointNumber,
-                    PointName = pointName.Trim()
+                    PointName = pointName
                 });
             }
             
             return points;
+        }
+        
+        private static string CleanPointName(string name)
+        {
+            // Remove leading OCR artifacts
+            name = name.TrimStart('|', 'f', 'I', 'l', '[', ']');
+            
+            // Remove trailing punctuation artifacts
+            name = name.TrimEnd('|', '[', ']', '\\');
+            
+            // Fix common OCR errors
+            name = name.Replace("||", "");
+            name = name.Replace("|f", "");
+            name = name.Replace("[GATE", "");
+            name = name.Replace("fI", "");
+            
+            // Normalize whitespace
+            name = Regex.Replace(name, @"\s+", " ");
+            
+            return name.Trim();
         }
         
         private static List<List<OcrWord>> ClusterWordsByY(List<OcrWord> words, double tolerance)
