@@ -309,6 +309,11 @@ namespace RTUPointlistParse
                     if (!int.TryParse(match.Groups[1].Value, out int pointNumber))
                         continue;
 
+                    // Filter out large numbers (likely reference/document numbers)
+                    // Point numbers in the tables are typically small (1-300)
+                    if (pointNumber > 500)
+                        continue;
+
                     // Extract point name from the remainder
                     string remainder = match.Groups[2].Value.Trim();
                     string pointName = ExtractPointName(remainder);
@@ -368,31 +373,58 @@ namespace RTUPointlistParse
             // Extract the meaningful tokens (before control/state information)
             var tokens = firstPart.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             var nameTokens = new List<string>();
+            int consecutiveSmallNumbers = 0;
 
             foreach (var token in tokens)
             {
                 // Stop at state keywords
                 if (token == "CLOSE" || token == "OPEN" || token == "NORMAL" || token == "ALARM" ||
-                    token == "AUTO" || token == "SOLID" || token == "MANUAL" ||
+                    token == "AUTO" || token == "SOLID" || token == "MANUAL" || token == "auto" ||
                     token.Contains("95-") || token.Contains("/AT") ||
                     token == "[" || token == "]" || token == "=" || token == "—")
                 {
                     break;
                 }
 
-                // Clean and add the token
+                // Clean the token
                 string cleaned = CleanToken(token);
-                if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length > 1)
+                if (string.IsNullOrWhiteSpace(cleaned) || cleaned.Length <= 1)
                 {
-                    nameTokens.Add(cleaned);
+                    continue;
                 }
+
+                // Check if this is a small standalone number (likely part of table structure, not name)
+                if (int.TryParse(cleaned, out int num) && num < 100 && nameTokens.Count > 2)
+                {
+                    consecutiveSmallNumbers++;
+                    // If we see multiple small numbers in a row, stop (likely entering data columns)
+                    if (consecutiveSmallNumbers >= 2)
+                        break;
+                    continue;
+                }
+                else
+                {
+                    consecutiveSmallNumbers = 0;
+                }
+
+                nameTokens.Add(cleaned);
 
                 // Stop after reasonable number of tokens
                 if (nameTokens.Count >= 15)
                     break;
             }
 
-            return string.Join(" ", nameTokens).Trim();
+            // Join and clean up the result
+            string result = string.Join(" ", nameTokens).Trim();
+            
+            // Remove common OCR patterns at the end
+            result = Regex.Replace(result, @"\s+[FI]\s*$", "");  // Trailing F or I
+            result = Regex.Replace(result, @"\s+\d{1,2}\s*$", "");  // Trailing 1-2 digit numbers
+            result = Regex.Replace(result, @"[F—\-~""]+\s*$", "");  // Trailing dashes, quotes, or F characters
+            result = Regex.Replace(result, @"\s+[|\[\]]+\s*$", "");  // Trailing brackets
+            result = Regex.Replace(result, @"\s+(lg|Tn|E\|)\s*$", "", RegexOptions.IgnoreCase);  // Common OCR trailing artifacts
+            
+            return result.Trim();
         }
 
         /// <summary>
@@ -408,6 +440,8 @@ namespace RTUPointlistParse
                 .Replace("]", "")
                 .Replace("(", "")
                 .Replace(")", "")
+                .Replace("{", "")
+                .Replace("}", "")
                 .Trim();
 
             // Remove leading OCR artifacts
@@ -415,6 +449,33 @@ namespace RTUPointlistParse
                    char.IsUpper(cleaned[1]))
             {
                 cleaned = cleaned.Substring(1);
+            }
+
+            // Common OCR substitutions
+            cleaned = cleaned
+                .Replace("ftnyo", "INYO")
+                .Replace("tnyo", "INYO")
+                .Replace("NYO", "INYO")  // Common OCR error
+                .Replace("GAS7AIR", "GAS/AIR")
+                .Replace("T15KV", "115KV")
+                .Replace("fi1S5KV", "115KV")
+                .Replace("i1S5KV", "115KV")
+                .Replace("lOXBOW", "OXBOW")
+                .Replace("WWIXIE", "DIXIE")
+                .Replace("fNO.", "NO.")
+                .Replace("FNO.", "NO.")
+                .Replace("INO.", "NO.")
+                .Replace("FTRANS", "TRANS")
+                .Replace("NHIBIT", "INHIBIT")  // Common OCR error
+                .Replace("CBF", "CB")  // Trailing F artifact
+                .Replace("coso", "COSO");  // Fix lowercase
+
+            // Fix common patterns at start
+            if (cleaned.StartsWith("N") && cleaned.Length > 2 && char.IsUpper(cleaned[1]))
+            {
+                // Check if it should be "I" (like NYO -> INYO)
+                if (cleaned.StartsWith("NYO"))
+                    cleaned = "I" + cleaned;
             }
 
             return cleaned;
@@ -454,6 +515,15 @@ namespace RTUPointlistParse
             // Filter out common OCR noise
             if (pointName == "I" || pointName == "F" || pointName == "J" || pointName == "L" ||
                 pointName == "—" || pointName == "=" || pointName == "DI" || pointName == "or")
+                return true;
+
+            // Filter out metadata/reference lines
+            if (pointName.Contains("LISTING") || pointName.Contains("CONSTRUCTION") ||
+                pointName.Contains("ADDED POINT") || pointName.Contains("REPL'D RLY") ||
+                pointName.Contains("REFERENCE DRAWINGS") || pointName.Contains("SAP") ||
+                pointName.Contains("PLOT BY") || pointName.Contains("ISSUED FOR") ||
+                pointName.Contains("REVISIONS") || pointName.Contains("DIG PT LISTING") ||
+                pointName.Contains("ANALOG PT LISTING") || pointName.Contains("ED RTU/EPAC"))
                 return true;
 
             return false;
