@@ -87,10 +87,7 @@ namespace RTUPointlistParse
             }
 
             // Collect all table rows from all PDFs
-            // Note: In a real implementation with text-based PDFs, you would need to:
-            // 1. Distinguish between Status and Analog data based on content or filename
-            // 2. Parse different table structures for each type
-            // For image-based PDFs (like the current example), this will result in empty collections
+            // Store them with their point numbers for sorting
             var allStatusRows = new List<TableRow>();
             var allAnalogRows = new List<TableRow>();
 
@@ -142,6 +139,10 @@ namespace RTUPointlistParse
                 }
             }
 
+            // Sort rows by point number and renumber sequentially starting from 1
+            allStatusRows = SortAndRenumberRows(allStatusRows);
+            allAnalogRows = SortAndRenumberRows(allAnalogRows);
+
             // Generate a single combined Excel file
             // Use a generic name or derive from folder/first file
             string outputFileName = "Control_rtu837_DNP_pointlist_rev00.xlsx";
@@ -149,6 +150,8 @@ namespace RTUPointlistParse
             
             Console.WriteLine();
             Console.WriteLine($"Generating combined Excel file: {outputFileName}");
+            Console.WriteLine($"  Status points: {allStatusRows.Count}");
+            Console.WriteLine($"  Analog points: {allAnalogRows.Count}");
             GenerateExcel(allStatusRows, allAnalogRows, outputPath);
             Console.WriteLine($"  Generated: {outputFileName}");
 
@@ -459,7 +462,6 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
 
             foreach (var line in lines)
             {
@@ -485,17 +487,16 @@ namespace RTUPointlistParse
                     // Check if this looks like a data row (starts with number followed by | or [)
                     if (DataRowPattern.IsMatch(columnLine))
                     {
-                        // Parse this as a status data row - extract only Point Number and Point Name
-                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
+                        // Parse this as a status data row - extract Point Number and Point Name
+                        var parsedRow = ParseSimpleDataRow(columnLine);
                         if (parsedRow != null)
                         {
                             string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                             
-                            // Filter out empty rows and rows where Point Name contains "Spare"
-                            if (IsValidPointName(pointName))
+                            // Include all rows with valid point names (including Spare)
+                            if (!string.IsNullOrWhiteSpace(pointName) && pointName.Length > 2)
                             {
                                 rows.Add(parsedRow);
-                                pointNumber++;
                             }
                         }
                     }
@@ -513,7 +514,6 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
 
             foreach (var line in lines)
             {
@@ -537,17 +537,16 @@ namespace RTUPointlistParse
                     // Check if this looks like a data row
                     if (DataRowPattern.IsMatch(columnLine))
                     {
-                        // Parse this as an analog data row - extract only Point Number and Point Name
-                        var parsedRow = ParseSimpleDataRow(columnLine, pointNumber);
+                        // Parse this as an analog data row - extract Point Number and Point Name
+                        var parsedRow = ParseSimpleDataRow(columnLine);
                         if (parsedRow != null)
                         {
                             string pointName = parsedRow.Columns.Count > 1 ? parsedRow.Columns[1] : "";
                             
-                            // Filter out empty rows and rows where Point Name contains "Spare"
-                            if (IsValidPointName(pointName))
+                            // Include all rows with valid point names (including Spare)
+                            if (!string.IsNullOrWhiteSpace(pointName) && pointName.Length > 2)
                             {
                                 rows.Add(parsedRow);
-                                pointNumber++;
                             }
                         }
                     }
@@ -653,6 +652,36 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
+        /// Sort rows by point number and renumber them sequentially starting from 1
+        /// </summary>
+        private static List<TableRow> SortAndRenumberRows(List<TableRow> rows)
+        {
+            if (rows.Count == 0)
+                return rows;
+
+            // Parse point numbers and sort
+            var sortedRows = rows
+                .Where(r => r.Columns.Count >= 2)
+                .Select(r => new
+                {
+                    Row = r,
+                    PointNum = int.TryParse(r.Columns[0], out int num) ? num : int.MaxValue
+                })
+                .Where(x => x.PointNum != int.MaxValue)  // Filter out invalid point numbers
+                .OrderBy(x => x.PointNum)
+                .Select(x => x.Row)
+                .ToList();
+
+            // Renumber sequentially starting from 1
+            for (int i = 0; i < sortedRows.Count; i++)
+            {
+                sortedRows[i].Columns[0] = (i + 1).ToString();
+            }
+
+            return sortedRows;
+        }
+
+        /// <summary>
         /// Check if a line is metadata or header (should be skipped)
         /// </summary>
         private static bool IsMetadataOrHeaderLine(string line)
@@ -663,6 +692,16 @@ namespace RTUPointlistParse
                 line.StartsWith("i ") || line.StartsWith("a ") ||
                 (line.Contains("—") && line.Length < 20) ||
                 (line.Contains("NOTE") && line.Contains("ADDED POINT")))
+            {
+                return true;
+            }
+
+            // Skip document reference lines (large numbers like 5640064, 5640065, etc.)
+            if (line.Contains("5640064") || line.Contains("5640065") || line.Contains("5640066") || 
+                line.Contains("5640067") || line.Contains("585409") ||
+                line.Contains("LISTING RTU") || line.Contains("SYSTEM 115KV") ||
+                line.Contains("ONE LINE FOR CONSTRUCTION") ||
+                line.Contains("ADDED POINT FOR 115KV LINE"))
             {
                 return true;
             }
@@ -688,7 +727,7 @@ namespace RTUPointlistParse
         /// <summary>
         /// Parse a data row from OCR text extracting only Point Number and Point Name
         /// </summary>
-        private static TableRow? ParseSimpleDataRow(string line, int pointNumber)
+        private static TableRow? ParseSimpleDataRow(string line)
         {
             try
             {
@@ -697,6 +736,7 @@ namespace RTUPointlistParse
                 if (!match.Success)
                     return null;
 
+                string pointNumber = match.Groups[1].Value.Trim();
                 string remainder = match.Groups[2].Value;
 
                 // Split by | to separate sections
@@ -715,8 +755,8 @@ namespace RTUPointlistParse
                 // Build the row with only Point Number and Point Name
                 var columns = new List<string>
                 {
-                    pointNumber.ToString(),  // Point Number
-                    pointName                // Point Name
+                    pointNumber,    // Point Number (extracted from PDF)
+                    pointName       // Point Name
                 };
 
                 return new TableRow { Columns = columns };
