@@ -441,7 +441,6 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int tabIndex = 0; // Start from 0 as per expected output
 
             foreach (var line in lines)
             {
@@ -458,11 +457,10 @@ namespace RTUPointlistParse
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
                     // Parse this as a status data row
-                    var parsedRow = ParseStatusDataRow(trimmedLine, tabIndex);
-                    if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX]))
+                    var parsedRow = ParseStatusDataRow(trimmedLine, 0); // tabIndex not used anymore
+                    if (parsedRow != null && parsedRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[1]))
                     {
                         rows.Add(parsedRow);
-                        tabIndex++;
                     }
                 }
             }
@@ -477,7 +475,6 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int tabIndex = 0; // Start from 0 as per expected output
 
             foreach (var line in lines)
             {
@@ -494,11 +491,10 @@ namespace RTUPointlistParse
                 if (DataRowPattern.IsMatch(trimmedLine))
                 {
                     // Parse this as an analog data row
-                    var parsedRow = ParseAnalogDataRow(trimmedLine, tabIndex);
-                    if (parsedRow != null && parsedRow.Columns.Count > POINT_NAME_COLUMN_INDEX_ANALOG && !string.IsNullOrWhiteSpace(parsedRow.Columns[POINT_NAME_COLUMN_INDEX_ANALOG]))
+                    var parsedRow = ParseAnalogDataRow(trimmedLine, 0); // tabIndex not used anymore
+                    if (parsedRow != null && parsedRow.Columns.Count >= 2 && !string.IsNullOrWhiteSpace(parsedRow.Columns[1]))
                     {
                         rows.Add(parsedRow);
-                        tabIndex++;
                     }
                 }
             }
@@ -549,7 +545,7 @@ namespace RTUPointlistParse
 
         /// <summary>
         /// Parse a Status data row from OCR text
-        /// Expected columns: TAB, CONTROL_ADDR, POINT_NAME, NORMAL_STATE, 1_STATE, 0_STATE, AOR, DOG_1, DOG_2, EMS_TP, VOLTAGE_BASE, ...
+        /// Extracts only Point Number and Point Name columns
         /// </summary>
         private static TableRow? ParseStatusDataRow(string line, int tabIndex)
         {
@@ -560,42 +556,34 @@ namespace RTUPointlistParse
                 if (!match.Success)
                     return null;
 
+                string pointNumber = match.Groups[1].Value.Trim();
                 string remainder = match.Groups[2].Value;
 
                 // Split by | to separate sections
                 var sections = remainder.Split('|');
-                if (sections.Length < 2)
+                if (sections.Length < 1)
                     return null;
 
                 // First section contains: POINT_NAME and possibly control address and state info
                 string firstSection = sections[0].Trim();
-                string secondSection = sections.Length > 1 ? sections[1].Trim() : "";
 
                 // Extract point name (everything before certain keywords or numbers pattern)
                 string pointName = ExtractPointName(firstSection);
                 if (string.IsNullOrWhiteSpace(pointName))
                     return null;
 
-                // Try to extract control address (small number after point name)
-                string controlAddr = ExtractControlAddress(firstSection, pointName);
+                // Filter out "Spare" entries (case-insensitive)
+                if (pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase) || 
+                    pointName.StartsWith("SPARE ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
 
-                // Extract state information (NORMAL_STATE, 1_STATE, 0_STATE)
-                var (normalState, state1, state0) = ExtractStateInfo(firstSection, secondSection);
-
-                // Build the row with available data
+                // Build the row with only Point Number and Point Name
                 var columns = new List<string>
                 {
-                    tabIndex.ToString(),           // TAB DEC DNP INDEX
-                    controlAddr,                    // CONTROL ADDRESS
-                    pointName,                      // POINT NAME
-                    normalState,                    // NORMAL STATE
-                    state1,                         // 1_STATE
-                    state0,                         // 0_STATE
-                    DEFAULT_AOR_VALUE,              // AOR (default)
-                    ExtractAlarmClass(line, 1),    // DOG_1
-                    ExtractAlarmClass(line, 2),    // DOG_2
-                    "",                            // EMS TP NUMBER (not readily available)
-                    ExtractVoltage(pointName)       // VOLTAGE BASE
+                    pointNumber,    // Point Number
+                    pointName       // Point Name
                 };
 
                 return new TableRow { Columns = columns };
@@ -609,7 +597,7 @@ namespace RTUPointlistParse
 
         /// <summary>
         /// Parse an Analog data row from OCR text
-        /// Expected columns: TAB, POINT_NAME, COEFFICIENT, OFFSET, VALUE, UNIT, LOW_LIMIT, HIGH_LIMIT, AOR, DOG_1, DOG_2, ...
+        /// Extracts only Point Number and Point Name columns
         /// </summary>
         private static TableRow? ParseAnalogDataRow(string line, int tabIndex)
         {
@@ -619,6 +607,7 @@ namespace RTUPointlistParse
                 if (!match.Success)
                     return null;
 
+                string pointNumber = match.Groups[1].Value.Trim();
                 string remainder = match.Groups[2].Value;
                 var sections = remainder.Split('|');
                 if (sections.Length < 1)
@@ -631,20 +620,18 @@ namespace RTUPointlistParse
                 if (string.IsNullOrWhiteSpace(pointName))
                     return null;
 
-                // Build the row with available data (many fields will be empty for OCR data)
+                // Filter out "Spare" entries (case-insensitive)
+                if (pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase) || 
+                    pointName.StartsWith("SPARE ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+
+                // Build the row with only Point Number and Point Name
                 var columns = new List<string>
                 {
-                    tabIndex.ToString(),    // TAB DEC DNP INDEX
-                    pointName,              // POINT NAME
-                    "",                     // COEFFICIENT
-                    "",                     // OFFSET
-                    "",                     // VALUE
-                    "",                     // UNIT
-                    "",                     // LOW LIMIT
-                    "",                     // HIGH LIMIT
-                    DEFAULT_AOR_VALUE,      // AOR (default)
-                    ExtractAlarmClass(line, 1),  // DOG_1
-                    ExtractAlarmClass(line, 2),  // DOG_2
+                    pointNumber,    // Point Number
+                    pointName       // Point Name
                 };
 
                 return new TableRow { Columns = columns };
@@ -921,22 +908,12 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 10).Value = "BES ASSET:  ";
             worksheet.Cell(currentRow, 23).Value = "TESTING HISTORY";
 
-            // Add column headers
+            // Add column headers - only 2 columns now
             currentRow += 2;
-            worksheet.Cell(currentRow, 2).Value = "CONTROL ADDRESS ";
-            worksheet.Cell(currentRow, 4).Value = "STATUS STATE PAIR INFO ";
-            worksheet.Cell(currentRow, 7).Value = "ALARMS  ";
-            worksheet.Cell(currentRow, 12).Value = "CROSS REFERENCE EXISTING EMS DATA ";
-            worksheet.Cell(currentRow, 16).Value = "TAB-1 BASED ";
-            worksheet.Cell(currentRow, 17).Value = "IED INFORMATION ";
 
             currentRow += 2;
             var headers = new[] {
-                "TAB DEC DNP INDEX", "0 BASED CONTROL ADDRESS", "POINT NAME                    ",
-                "NORMAL STATE", "1_STATE", "0_STATE", "AOR", " DOG_1 /3  ", "  DOG_2 /4   ",
-                "EMS TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME", "EXISTING POINT NAME",
-                "EXISTING TAB NUM", "ITEM  ", "CONTROL  ADDRESS", "LAN     (CARD_PORT)",
-                "IED ADDRESS", "I/O_REGISTER       DNP_INDEX        ", "PLC_MAPPING   OBJECT_NAME    "
+                "Point Number", "Point Name"
             };
 
             for (int i = 0; i < headers.Length; i++)
@@ -991,27 +968,12 @@ namespace RTUPointlistParse
             worksheet.Cell(currentRow, 5).Value = "PSC TECHENICIAN:  ";
             worksheet.Cell(currentRow, 10).Value = "TESTMAN: ";
 
-            // Add column group headers
+            // Add column headers - only 2 columns now
             currentRow += 2;
-            worksheet.Cell(currentRow, 1).Value = "EMS DATABASE INFORMATION ";
-            worksheet.Cell(currentRow, 14).Value = "CROSS REFERENCE INFORMATION ";
-            worksheet.Cell(currentRow, 17).Value = "FIELD INFORMATION ";
-
             currentRow++;
-            worksheet.Cell(currentRow, 3).Value = "SCALING ";
-            worksheet.Cell(currentRow, 5).Value = "FULL SCALE ";
-            worksheet.Cell(currentRow, 7).Value = "LIMITS ";
-            worksheet.Cell(currentRow, 9).Value = "ALARMS ";
-            worksheet.Cell(currentRow, 14).Value = "EXISTING EMS DATA ";
-            worksheet.Cell(currentRow, 17).Value = "IED  INFORMATION ";
-
             currentRow++;
             var headers = new[] {
-                "TAB DEC DNP INDEX", "POINT NAME", "COEFFICIENT", "OFFSET", "VALUE", "UNIT",
-                "LOW LIMIT", "HIGH LIMIT", "       AOR        ", "       DOG_1/3        ",
-                "    DOG_2/4     ", "EMS_TP NUMBER", "VOLTAGE BASE", "EXISTING DEVICE NAME",
-                "EXISTING POINT NAME", "EXISTING TAB NUM", "ITEM", "LAN_CARD-PORT",
-                "IED_ADDRESS", "I/O_REGISTER_or DNP_INDEX"
+                "Point Number", "Point Name"
             };
 
             for (int i = 0; i < headers.Length; i++)
