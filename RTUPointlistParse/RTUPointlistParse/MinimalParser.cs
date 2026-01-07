@@ -15,7 +15,7 @@ namespace RTUPointlistParse
         private const int HEADER_Y_GAP_TOLERANCE = 12; // Max Y gap between stacked headers
         private const int ROW_Y_TOLERANCE = 50; // Y tolerance for row clustering (increased for headers)
         private const int COL1_X_EXPAND = 15; // Expand X range for Point Number column
-        private const int COL2_X_EXPAND = 30; // Expand X range for Point Name column
+        private const int COL2_X_EXPAND = 200; // Expand X range for Point Name column (wide to capture full names)
 
         /// <summary>
         /// Process all PDF files and generate PointList.xlsx and log
@@ -311,8 +311,8 @@ namespace RTUPointlistParse
                             {
                                 PointNumberX0 = numberWord.X0 - COL1_X_EXPAND,
                                 PointNumberX1 = numberWord.X1 + COL1_X_EXPAND,
-                                PointNameX0 = pointWord.X0 - COL2_X_EXPAND,
-                                PointNameX1 = nameWord.X1 + COL2_X_EXPAND,
+                                PointNameX0 = pointWord.X0 - COL2_X_EXPAND,  // Start from POINT, not NAME
+                                PointNameX1 = nameWord.X1 + COL2_X_EXPAND * 2,  // Extend further right
                                 HeaderY1 = Math.Max(numberWord.Y1, Math.Max(pointWord.Y1, nameWord.Y1)),
                             });
                         }
@@ -349,14 +349,16 @@ namespace RTUPointlistParse
                 if (!int.TryParse(pointNumWord.Text, out int pointNumber))
                     continue;
 
-                // Extract Point Name (words in Col2 band or to the right of Point Number)
+                // Extract Point Name - only words strictly within the Point Name X band
                 var nameWords = row.Where(w =>
-                    (w.X0 >= table.PointNameX0 && w.X0 <= table.PointNameX1) ||
-                    w.X0 > pointNumWord.X1)
+                    w.X0 >= table.PointNameX0 && w.X0 <= table.PointNameX1)
                     .OrderBy(w => w.X0)
                     .ToList();
 
                 string pointName = string.Join(" ", nameWords.Select(w => w.Text)).Trim();
+
+                // Clean up the point name
+                pointName = CleanPointName(pointName);
 
                 if (string.IsNullOrWhiteSpace(pointName))
                     continue; // Skip rows with empty point name
@@ -369,6 +371,26 @@ namespace RTUPointlistParse
             }
 
             return points;
+        }
+
+        /// <summary>
+        /// Clean up point name by removing OCR artifacts and extra delimiters
+        /// </summary>
+        private static string CleanPointName(string pointName)
+        {
+            // Remove leading/trailing delimiters
+            pointName = pointName.Trim('|', '=', '—', '_', ' ', '[', ']', '(', ')');
+            
+            // Remove sequences of vertical bars
+            pointName = Regex.Replace(pointName, @"\|+", " ");
+            
+            // Remove sequences of equals or dashes
+            pointName = Regex.Replace(pointName, @"[=—_]+", " ");
+            
+            // Replace multiple spaces with single space
+            pointName = Regex.Replace(pointName, @"\s+", " ");
+
+            return pointName.Trim();
         }
 
         /// <summary>
