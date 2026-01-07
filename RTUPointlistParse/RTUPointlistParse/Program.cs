@@ -699,71 +699,87 @@ namespace RTUPointlistParse
         private static List<TableHeader> DetectTableHeaders(List<OcrWord> words)
         {
             var headers = new List<TableHeader>();
-            const int HORIZONTAL_OVERLAP_TOLERANCE = 50;
-            const int VERTICAL_STACKING_TOLERANCE = 60;  // Distance for vertical stacking
+            const int HORIZONTAL_OVERLAP_TOLERANCE = 200;  // Allow wider horizontal overlap for stacking
+            const int VERTICAL_STACKING_DISTANCE_MIN = 10;  // Minimum vertical distance between stacked words
+            const int VERTICAL_STACKING_DISTANCE_MAX = 80;  // Maximum vertical distance between stacked words
             const int HORIZONTAL_ADJACENCY_TOLERANCE = 300;  // Distance for horizontal adjacency
+            const int SAME_LINE_TOLERANCE = 30;  // Tolerance for words on same horizontal line
 
             // Find all "POINT" words (case-insensitive)
             var pointWords = words.Where(w => w.Text.Equals("POINT", StringComparison.OrdinalIgnoreCase)).ToList();
             Console.WriteLine($"    Found {pointWords.Count} 'POINT' words");
 
-            // Also look for "NUMBER" words
+            // Find all "NUMBER" words (case-insensitive)
             var numberWords = words.Where(w => w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase)).ToList();
             Console.WriteLine($"    Found {numberWords.Count} 'NUMBER' words");
 
-            // Debug: Show some sample words
-            if (pointWords.Count < 5)
+            // Debug output
+            foreach (var pw in pointWords.Take(3))
             {
-                Console.WriteLine($"    Sample words: {string.Join(", ", words.Take(40).Select(w => $"{w.Text}@({w.X},{w.Y})"))}");
+                Console.WriteLine($"      POINT: ({pw.X}, {pw.Y}) to ({pw.Right}, {pw.Bottom})");
+            }
+            foreach (var nw in numberWords.Take(3))
+            {
+                Console.WriteLine($"      NUMBER: ({nw.X}, {nw.Y}) to ({nw.Right}, {nw.Bottom})");
             }
 
-            foreach (var pointWord in pointWords)
+            // Strategy: Look for NUMBER words, then find POINT below them (NUMBER is on top, POINT below)
+            foreach (var numberWord in numberWords)
             {
-                // Look for "NUMBER" word below this "POINT" (stacked vertically)
-                var numberWord = words.FirstOrDefault(w =>
-                    w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase) &&
-                    Math.Abs(w.CenterX - pointWord.CenterX) <= HORIZONTAL_OVERLAP_TOLERANCE &&
-                    w.Y > pointWord.Bottom &&
-                    w.Y - pointWord.Bottom <= VERTICAL_STACKING_TOLERANCE);
+                // Look for "POINT" word below this "NUMBER" (vertically stacked: NUMBER on top, POINT below)
+                var pointWord = pointWords.FirstOrDefault(w =>
+                    Math.Abs(w.CenterX - numberWord.CenterX) <= HORIZONTAL_OVERLAP_TOLERANCE &&
+                    w.Y > numberWord.Bottom &&
+                    w.Y - numberWord.Bottom >= VERTICAL_STACKING_DISTANCE_MIN &&
+                    w.Y - numberWord.Bottom <= VERTICAL_STACKING_DISTANCE_MAX);
 
-                // If not found vertically stacked, look for "NUMBER" horizontally adjacent (side by side)
-                if (numberWord == null)
+                if (pointWord == null)
                 {
-                    numberWord = words.FirstOrDefault(w =>
-                        w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase) &&
-                        Math.Abs(w.CenterY - pointWord.CenterY) <= 20 &&  // Same horizontal line
-                        w.X > pointWord.Right - 20 &&  // To the right
-                        w.X - pointWord.Right <= 100);  // Close by
-                }
-
-                if (numberWord == null)
-                {
-                    Console.WriteLine($"    POINT at ({pointWord.X}, {pointWord.Y}) - no matching NUMBER found");
+                    Console.WriteLine($"    NUMBER at ({numberWord.X}, {numberWord.Y}) - no matching POINT found below");
                     continue;
                 }
 
-                Console.WriteLine($"    Found POINT/NUMBER pair at ({pointWord.X}, {pointWord.Y}) and ({numberWord.X}, {numberWord.Y})");
+                Console.WriteLine($"    Found NUMBER/POINT stack at ({numberWord.X}, {numberWord.Y}) and ({pointWord.X}, {pointWord.Y})");
 
-                // Found POINT/NUMBER - now look for "POINT NAME" header nearby
-                var pointNameWords = FindPointNameHeader(words, pointWord, numberWord, HORIZONTAL_ADJACENCY_TOLERANCE);
+                // Now look for "POINT NAME" header to the right of this stack
+                // Find another "POINT" word to the right on approximately the same line as the first POINT
+                var pointWord2 = pointWords.FirstOrDefault(w =>
+                    w != pointWord &&  // Not the same word
+                    w.X > pointWord.Right &&  // To the right
+                    w.X - pointWord.Right <= HORIZONTAL_ADJACENCY_TOLERANCE &&  // Within adjacency distance
+                    Math.Abs(w.CenterY - pointWord.CenterY) <= SAME_LINE_TOLERANCE);  // Similar Y position
 
-                if (pointNameWords == null)
+                if (pointWord2 == null)
                 {
-                    Console.WriteLine($"    No POINT NAME header found for this pair");
+                    Console.WriteLine($"    No second POINT found to the right of POINT at ({pointWord.X}, {pointWord.Y})");
                     continue;
                 }
 
-                var (pointWord2, nameWord) = pointNameWords.Value;
-                Console.WriteLine($"    Found complete header: POINT/NUMBER at ({pointWord.X}, {pointWord.Y}), POINT NAME at ({pointWord2.X}, {pointWord2.Y})");
+                // Look for "NAME" word to the right of the second POINT
+                var nameWord = words.FirstOrDefault(w =>
+                    w.Text.Equals("NAME", StringComparison.OrdinalIgnoreCase) &&
+                    Math.Abs(w.CenterY - pointWord2.CenterY) <= SAME_LINE_TOLERANCE &&  // Same horizontal line
+                    w.X >= pointWord2.Right - 20 &&  // Can be slightly overlapping
+                    w.X - pointWord2.Right <= 200);  // Close to POINT
+
+                if (nameWord == null)
+                {
+                    Console.WriteLine($"    No NAME found to the right of second POINT at ({pointWord2.X}, {pointWord2.Y})");
+                    continue;
+                }
+
+                Console.WriteLine($"    Found complete header: NUMBER/POINT at ({numberWord.X}, {numberWord.Y})/({pointWord.X}, {pointWord.Y}), POINT NAME at ({pointWord2.X}, {pointWord2.Y})/({nameWord.X}, {nameWord.Y})");
 
                 // Create table header
+                // Column 1 is for Point Number (under NUMBER/"POINT")
+                // Column 2 is for Point Name (under "POINT NAME")
                 var header = new TableHeader
                 {
-                    PointNumberColumnX = pointWord.CenterX,
-                    PointNumberColumnWidth = Math.Max(pointWord.Width, numberWord.Width) + 40, // Expand band
-                    PointNameColumnX = pointWord2.CenterX,
-                    PointNameColumnWidth = (nameWord.Right - pointWord2.X) + 60, // Expand band
-                    HeaderBottomY = Math.Max(numberWord.Bottom, nameWord.Bottom),
+                    PointNumberColumnX = pointWord.CenterX,  // Center of POINT (which is below NUMBER)
+                    PointNumberColumnWidth = Math.Max(pointWord.Width, numberWord.Width) + 100, // Span with buffer
+                    PointNameColumnX = (pointWord2.CenterX + nameWord.CenterX) / 2,  // Center between POINT and NAME
+                    PointNameColumnWidth = (nameWord.Right - pointWord2.X) + 150, // Span from POINT to NAME with buffer
+                    HeaderBottomY = Math.Max(pointWord.Bottom, nameWord.Bottom),
                     TableEndY = int.MaxValue // Will be refined if another header is found
                 };
 
@@ -778,55 +794,6 @@ namespace RTUPointlistParse
             }
 
             return headers;
-        }
-
-        /// <summary>
-        /// Find "POINT NAME" header words adjacent to the POINT/NUMBER
-        /// </summary>
-        private static (OcrWord, OcrWord)? FindPointNameHeader(List<OcrWord> words, OcrWord pointWord, OcrWord numberWord, int tolerance)
-        {
-            const int VERTICAL_TOLERANCE = 30;
-
-            // Determine the reference Y position (use pointWord or numberWord depending on layout)
-            int referenceY = pointWord.CenterY;
-            int referenceRight = Math.Max(pointWord.Right, numberWord.Right);
-
-            // Find "POINT" word to the right of the first POINT/NUMBER (in a similar vertical band)
-            var pointWord2 = words.FirstOrDefault(w =>
-                w.Text.Equals("POINT", StringComparison.OrdinalIgnoreCase) &&
-                w.X > referenceRight &&
-                w.X - referenceRight <= tolerance &&
-                Math.Abs(w.CenterY - referenceY) <= VERTICAL_TOLERANCE);
-
-            // Also try looking for NAME directly if POINT is not found
-            if (pointWord2 == null)
-            {
-                // Maybe "POINT" is missing, look for "NAME" directly
-                var nameWord = words.FirstOrDefault(w =>
-                    w.Text.Equals("NAME", StringComparison.OrdinalIgnoreCase) &&
-                    w.X > referenceRight &&
-                    w.X - referenceRight <= tolerance &&
-                    Math.Abs(w.CenterY - referenceY) <= VERTICAL_TOLERANCE);
-
-                if (nameWord != null)
-                {
-                    // Use the nameWord as both (faking the POINT word for column positioning)
-                    return (nameWord, nameWord);
-                }
-                return null;
-            }
-
-            // Find "NAME" word adjacent to the second POINT
-            var nameWord2 = words.FirstOrDefault(w =>
-                w.Text.Equals("NAME", StringComparison.OrdinalIgnoreCase) &&
-                w.X >= pointWord2.Right - 20 &&  // Can be slightly overlapping
-                w.X - pointWord2.Right <= 100 &&   // Close to POINT
-                Math.Abs(w.CenterY - pointWord2.CenterY) <= VERTICAL_TOLERANCE);
-
-            if (nameWord2 == null)
-                return null;
-
-            return (pointWord2, nameWord2);
         }
 
         /// <summary>
