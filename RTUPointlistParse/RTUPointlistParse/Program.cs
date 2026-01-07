@@ -463,8 +463,7 @@ namespace RTUPointlistParse
                     {
                         // Filter out "Spare" entries (case-insensitive, including variations)
                         string pointName = parsedRow.Columns[POINT_NAME_COLUMN_INDEX].Trim();
-                        if (!pointName.StartsWith("SPARE", StringComparison.OrdinalIgnoreCase) &&
-                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        if (!pointName.StartsWith("spare", StringComparison.OrdinalIgnoreCase))
                         {
                             rows.Add(parsedRow);
                             tabIndex++;
@@ -505,8 +504,7 @@ namespace RTUPointlistParse
                     {
                         // Filter out "Spare" entries (case-insensitive, including variations)
                         string pointName = parsedRow.Columns[POINT_NAME_COLUMN_INDEX_ANALOG].Trim();
-                        if (!pointName.StartsWith("SPARE", StringComparison.OrdinalIgnoreCase) &&
-                            !pointName.StartsWith("Spare", StringComparison.OrdinalIgnoreCase))
+                        if (!pointName.StartsWith("spare", StringComparison.OrdinalIgnoreCase))
                         {
                             rows.Add(parsedRow);
                             tabIndex++;
