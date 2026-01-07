@@ -31,6 +31,12 @@ public class App
     // Column detection constants
     private const int ColumnSeparationPixels = 20;  // Minimum horizontal gap between columns
     private const int LeftColumnThresholdDivisor = 3;  // Use first 1/3 of X positions for left column
+    
+    // OCR artifact filtering
+    private static readonly HashSet<string> OcrNoisePatterns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "I", "F", "J", "L", "—", "=", "DI", "or", "|", "[", "]", "(", ")", "{", "}", "_"
+    };
 
     private readonly List<string> logLines = new();
 
@@ -217,26 +223,38 @@ public class App
     {
         if (words.Count < 10) return null;
 
-        // Group words by X position to find vertical columns
-        var xPositions = words.Select(w => w.Bounds.X).OrderBy(x => x).ToList();
+        // Find words that look like point numbers (numeric)
+        var numericWords = words.Where(w => w.Text.Any(char.IsDigit)).ToList();
+        if (numericWords.Count < 5) return null;  // Need at least some numeric data
         
-        // Find leftmost cluster (column 1) - use first 1/3 of X positions
-        var leftWords = words.Where(w => w.Bounds.X < xPositions[words.Count / LeftColumnThresholdDivisor]).ToList();
-        if (leftWords.Count == 0) return null;
+        // Group numeric words by X position to find the leftmost numeric column
+        var numericXPositions = numericWords.Select(w => w.Bounds.X).OrderBy(x => x).ToList();
+        var medianNumericX = numericXPositions[numericXPositions.Count / 2];
+        
+        // Define column 1 band around the numeric words (point numbers)
+        var col1Words = numericWords.Where(w => Math.Abs(w.Bounds.X - medianNumericX) < 50).ToList();
+        if (col1Words.Count == 0) return null;
 
-        var col1MinX = leftWords.Min(w => w.Bounds.X);
-        var col1MaxX = leftWords.Max(w => w.Bounds.Right);
-        var col1MinY = leftWords.Min(w => w.Bounds.Y);
-        var col1MaxY = leftWords.Max(w => w.Bounds.Bottom);
+        var col1MinX = col1Words.Min(w => w.Bounds.X);
+        var col1MaxX = col1Words.Max(w => w.Bounds.Right);
+        var col1MinY = words.Min(w => w.Bounds.Y);
+        var col1MaxY = words.Max(w => w.Bounds.Bottom);
 
-        // Find next cluster to the right (column 2) with minimum separation
+        // Find text column to the right (point names) - words that are beyond column 1
         var rightWords = words.Where(w => w.Bounds.X > col1MaxX + ColumnSeparationPixels).ToList();
         if (rightWords.Count == 0) return null;
+        
+        // Find the main cluster of right words (not outliers)
+        var rightXPositions = rightWords.Select(w => w.Bounds.X).OrderBy(x => x).ToList();
+        var col2StartX = rightXPositions[Math.Min(rightXPositions.Count / 4, rightXPositions.Count - 1)];
+        
+        var col2Words = rightWords.Where(w => w.Bounds.X >= col2StartX - 20).ToList();
+        if (col2Words.Count == 0) return null;
 
-        var col2MinX = rightWords.Min(w => w.Bounds.X);
-        var col2MaxX = rightWords.Max(w => w.Bounds.Right);
-        var col2MinY = rightWords.Min(w => w.Bounds.Y);
-        var col2MaxY = rightWords.Max(w => w.Bounds.Bottom);
+        var col2MinX = col2Words.Min(w => w.Bounds.X);
+        var col2MaxX = col2Words.Max(w => w.Bounds.Right);
+        var col2MinY = words.Min(w => w.Bounds.Y);
+        var col2MaxY = words.Max(w => w.Bounds.Bottom);
 
         var col1 = new Rectangle(col1MinX, col1MinY, col1MaxX - col1MinX, col1MaxY - col1MinY);
         var col2 = new Rectangle(col2MinX, col2MinY, col2MaxX - col2MinX, col2MaxY - col2MinY);
@@ -280,19 +298,41 @@ public class App
 
             if (col1Words.Count == 0 || col2Words.Count == 0) continue;
 
-            // Extract point number from column 1
-            var numText = col1Words.FirstOrDefault(w => IsNumeric(w.Text))?.Text;
+            // Extract point number from column 1 - look for numeric words and clean them
+            var numText = col1Words
+                .Select(w => CleanOCRArtifacts(w.Text))
+                .FirstOrDefault(w => !string.IsNullOrWhiteSpace(w) && IsNumeric(w));
+            
             if (numText == null) continue;
+            if (!int.TryParse(numText, out var pointNumber)) continue;
 
-            if (!int.TryParse(Normalize(numText), out var pointNumber)) continue;
-
-            // Extract point name from column 2
-            var pointName = string.Join(" ", col2Words.Select(w => Normalize(w.Text)));
+            // Extract point name from column 2 - filter and clean each word
+            var cleanedWords = col2Words
+                .Select(w => CleanOCRArtifacts(w.Text))
+                .Where(w => !IsOcrNoise(w))
+                .ToList();
+            
+            if (cleanedWords.Count == 0) continue;
+            
+            var pointName = string.Join(" ", cleanedWords);
+            pointName = Normalize(pointName);
+            
             if (string.IsNullOrWhiteSpace(pointName)) continue;
 
             // Skip header rows
-            if (pointName.ToUpper().Contains("POINT") && pointName.ToUpper().Contains("NAME")) continue;
-            if (pointName.ToUpper().Contains("NUMBER")) continue;
+            var upperName = pointName.ToUpper();
+            if (upperName.Contains("POINT") && upperName.Contains("NAME")) continue;
+            if (upperName.Contains("NUMBER")) continue;
+            if (upperName.Contains("SPARE")) continue;  // Skip spare rows
+            
+            // Filter out metadata/reference lines
+            if (upperName.Contains("LISTING") || upperName.Contains("CONSTRUCTION") || 
+                upperName.Contains("ADDED POINT") || upperName.Contains("SYSTEM") ||
+                upperName.Contains("REFERENCE") || upperName.Contains("SAP") ||
+                upperName.Contains("PLOT BY") || upperName.StartsWith("RESERVED FOR"))
+            {
+                continue;
+            }
 
             rows.Add((pointNumber, pointName));
         }
@@ -315,6 +355,71 @@ public class App
         if (string.IsNullOrEmpty(s)) return "";
         s = Regex.Replace(s, @"\s+", " ");
         return s.Trim();
+    }
+
+    private static string CleanOCRArtifacts(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        
+        // Remove common OCR artifacts
+        string cleaned = text
+            .Replace("[f", "")
+            .Replace("||", "")
+            .Replace("|", "")
+            .Replace("[", "")
+            .Replace("]", "")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("{", "")
+            .Replace("}", "")
+            .Replace("_", " ")
+            .Trim();
+
+        // Remove leading OCR artifacts (lowercase l, f, I before uppercase letters)
+        while (cleaned.Length > 1 && (cleaned[0] == 'l' || cleaned[0] == 'f' || cleaned[0] == 'I') && 
+               char.IsUpper(cleaned[1]))
+        {
+            cleaned = cleaned.Substring(1);
+        }
+
+        if (cleaned.StartsWith("/") && cleaned.Length > 1)
+        {
+            cleaned = cleaned.Substring(1);
+        }
+
+        // Fix common OCR character confusions
+        cleaned = cleaned
+            .Replace("I'", "1 ")
+            .Replace("Il", "11")
+            .Replace("Tn", "11")
+            .Replace("T15KV", "115KV")
+            .Replace("FTRANS", "TRANS")
+            .Replace("TS5KV", "115KV")
+            .Replace("IN15KV", "115KV")
+            .Replace("N15KV", "115KV")
+            .Replace("FINO", "NO")
+            .Replace("FNO", "NO")
+            .Replace("INO", "NO")
+            .Replace("fi1S", "115")
+            .Replace("fF", "")
+            .Replace("cD", "CD")
+            .Replace("1155KV", "115KV")
+            .Replace("CSF", "CS")
+            .Replace("CBF", "CB");
+
+        return cleaned.Trim();
+    }
+
+    private static bool IsOcrNoise(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        if (text.Length <= 1) return true;  // Single characters are likely noise
+        if (OcrNoisePatterns.Contains(text)) return true;
+        
+        // Check if it's all punctuation or special characters
+        if (text.All(c => !char.IsLetterOrDigit(c))) return true;
+        
+        return false;
     }
 
     public static (List<int> duplicates, List<int> gaps) ValidateSequence(IEnumerable<int> nums)
