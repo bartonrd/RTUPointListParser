@@ -14,6 +14,15 @@ class App
 {
     private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
     private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+    
+    // OCR and table detection constants
+    private const int MinWordsForDetection = 10;
+    private const int ColumnXTolerance = 50;
+    private const int ColumnSeparationGap = 10;
+    private const int RowClusterYTolerance = 15;
+    private const int RowMatchYTolerance = 20;
+    private const int MinWordsInColumn = 5;
+    
     private readonly List<string> logLines = new();
 
     public static async Task<int> Main(string[] args)
@@ -24,7 +33,7 @@ class App
 
     public async Task<int> RunAsync(string inputFolder, string outputFolder, string? tessDataEnvVar, string? tessLangEnvVar)
     {
-        await Task.CompletedTask; // Make it async as required
+        await Task.CompletedTask; // Make it async as required by interface specification
         
         Log("RTU Point List Parser");
         Log("=====================");
@@ -221,7 +230,7 @@ class App
 
     public static (Rectangle col1, Rectangle col2)? DetectFirstTwoColumnBands(List<OcrWord> words)
     {
-        if (words.Count < 10) return null;
+        if (words.Count < MinWordsForDetection) return null;
 
         // Look for "POINT" and "NUMBER" header words (may be stacked)
         var headerWords = words.Where(w => 
@@ -233,19 +242,19 @@ class App
         {
             // Fall back to detecting numeric column
             var numericWords = words.Where(w => int.TryParse(w.Text, out _)).ToList();
-            if (numericWords.Count < 5) return null;
+            if (numericWords.Count < MinWordsInColumn) return null;
 
             // Find leftmost numeric column
             var leftmostX = numericWords.Min(w => w.Bounds.X);
-            var col1Words = numericWords.Where(w => Math.Abs(w.Bounds.X - leftmostX) < 50).ToList();
-            if (col1Words.Count < 5) return null;
+            var col1Words = numericWords.Where(w => Math.Abs(w.Bounds.X - leftmostX) < ColumnXTolerance).ToList();
+            if (col1Words.Count < MinWordsInColumn) return null;
 
             var col1Left = col1Words.Min(w => w.Bounds.X);
             var col1Right = col1Words.Max(w => w.Bounds.Right);
 
             // Find next column to the right
-            var col2Words = words.Where(w => w.Bounds.X > col1Right + 10).ToList();
-            if (col2Words.Count < 5) return null;
+            var col2Words = words.Where(w => w.Bounds.X > col1Right + ColumnSeparationGap).ToList();
+            if (col2Words.Count < MinWordsInColumn) return null;
 
             var col2Left = col2Words.Min(w => w.Bounds.X);
             var col2Right = col2Words.Max(w => w.Bounds.Right);
@@ -335,8 +344,8 @@ class App
             w.Bounds.X < bands.col2.Right).ToList();
 
         // Cluster into rows
-        var col1Rows = ClusterWordsIntoRows(col1Words, 15).ToList();
-        var col2Rows = ClusterWordsIntoRows(col2Words, 15).ToList();
+        var col1Rows = ClusterWordsIntoRows(col1Words, RowClusterYTolerance).ToList();
+        var col2Rows = ClusterWordsIntoRows(col2Words, RowClusterYTolerance).ToList();
 
         // Match rows by Y position
         foreach (var row1 in col1Rows)
@@ -356,7 +365,7 @@ class App
             }
 
             // Find matching row in column 2 (within Y tolerance)
-            var row2 = col2Rows.FirstOrDefault(r => Math.Abs(r.Y - row1.Y) <= 20);
+            var row2 = col2Rows.FirstOrDefault(r => Math.Abs(r.Y - row1.Y) <= RowMatchYTolerance);
             if (row2 == null || row2.Words.Count == 0) continue;
 
             // Combine words in column 2, ordered by X
