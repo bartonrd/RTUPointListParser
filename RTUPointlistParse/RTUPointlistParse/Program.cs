@@ -41,6 +41,10 @@ namespace RTUPointlistParse
         private static readonly System.Text.RegularExpressions.Regex TrailingSingleLetterPattern =
             new System.Text.RegularExpressions.Regex(@"\s+[A-Z]$",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
+        // Regex pattern for document reference numbers (typically 6-7 digit numbers >= 500000)
+        private static readonly System.Text.RegularExpressions.Regex DocumentReferencePattern =
+            new System.Text.RegularExpressions.Regex(@"\b[5-9]\d{5,6}\b",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
         
         // OCR artifact patterns
         private static readonly HashSet<string> OcrNoisePatterns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -665,10 +669,10 @@ namespace RTUPointlistParse
                 .Select(r => new
                 {
                     Row = r,
-                    PointNum = int.TryParse(r.Columns[0], out int num) ? num : int.MaxValue
+                    PointNum = int.TryParse(r.Columns[0], out int num) ? (int?)num : null
                 })
-                .Where(x => x.PointNum != int.MaxValue)  // Filter out invalid point numbers
-                .OrderBy(x => x.PointNum)
+                .Where(x => x.PointNum.HasValue)  // Filter out invalid point numbers
+                .OrderBy(x => x.PointNum.Value)
                 .Select(x => x.Row)
                 .ToList();
 
@@ -696,12 +700,11 @@ namespace RTUPointlistParse
                 return true;
             }
 
-            // Skip document reference lines (large numbers like 5640064, 5640065, etc.)
-            if (line.Contains("5640064") || line.Contains("5640065") || line.Contains("5640066") || 
-                line.Contains("5640067") || line.Contains("585409") ||
-                line.Contains("LISTING RTU") || line.Contains("SYSTEM 115KV") ||
-                line.Contains("ONE LINE FOR CONSTRUCTION") ||
-                line.Contains("ADDED POINT FOR 115KV LINE"))
+            // Skip document reference lines (contain large document reference numbers)
+            if (DocumentReferencePattern.IsMatch(line) &&
+                (line.Contains("LISTING") || line.Contains("SYSTEM") ||
+                 line.Contains("ONE LINE FOR CONSTRUCTION") ||
+                 line.Contains("ADDED POINT FOR")))
             {
                 return true;
             }
