@@ -16,6 +16,12 @@ public class App
     private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
     private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
 
+    // OCR and extraction constants
+    private const int YTolerance = 15;  // Pixel tolerance for clustering words into rows
+    private const int MaxVerticalSearchRange = 2000;  // Max vertical distance to search below header
+    private const int HeaderHorizontalTolerance = 50;  // Horizontal tolerance for matching point numbers to header column
+    private const int MaxPointNameWords = 15;  // Maximum number of words to include in point name
+
     private readonly List<string> _logLines = new();
 
     private void Log(string message)
@@ -271,16 +277,16 @@ public class App
         foreach (var header in headers)
         {
             var belowHeaderWords = words
-                .Where(w => w.Bounds.Top > header.Bounds.Bottom && w.Bounds.Bottom < header.Bounds.Bottom + 2000)
+                .Where(w => w.Bounds.Top > header.Bounds.Bottom && w.Bounds.Bottom < header.Bounds.Bottom + MaxVerticalSearchRange)
                 .ToList();
             
-            var rowClusters = ClusterWordsIntoRows(belowHeaderWords, 15, pageIndex, sourceFile);
+            var rowClusters = ClusterWordsIntoRows(belowHeaderWords, YTolerance, pageIndex, sourceFile);
             
             foreach (var cluster in rowClusters)
             {
                 var numberWord = cluster.Words
-                    .FirstOrDefault(w => w.Bounds.X >= header.Bounds.Left - 50 && 
-                                        w.Bounds.X <= header.Bounds.Right + 50 &&
+                    .FirstOrDefault(w => w.Bounds.X >= header.Bounds.Left - HeaderHorizontalTolerance && 
+                                        w.Bounds.X <= header.Bounds.Right + HeaderHorizontalTolerance &&
                                         int.TryParse(NormalizeText(w.Text), out _));
                 
                 if (numberWord != null && int.TryParse(NormalizeText(numberWord.Text), out int pointNumber))
@@ -288,7 +294,7 @@ public class App
                     var nameWords = cluster.Words
                         .Where(w => w.Bounds.X > numberWord.Bounds.Right)
                         .OrderBy(w => w.Bounds.X)
-                        .Take(15)
+                        .Take(MaxPointNameWords)
                         .ToList();
                     
                     if (nameWords.Count > 0)
