@@ -7,8 +7,8 @@ namespace RTUPointlistParse
 {
     public class Program
     {
-        private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
-        private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
+        private const string DefaultInputFolder = "ExamplePointlists/Example1/Input";
+        private const string DefaultOutputFolder = "ExamplePointlists/Example1/TestOutput";
 
         // Constants for data parsing
         private const string DEFAULT_AOR_VALUE = "43";  // Default Area of Responsibility
@@ -55,8 +55,8 @@ namespace RTUPointlistParse
             string inputFolder = args.Length > 0 ? args[0] : DefaultInputFolder;
             string outputFolder = args.Length > 1 ? args[1] : DefaultOutputFolder;
 
-            Console.WriteLine("RTU Point List Parser");
-            Console.WriteLine("=====================");
+            Console.WriteLine("RTU Point List Parser - Minimal Algorithm (OCR + Geometry)");
+            Console.WriteLine("===========================================================");
             Console.WriteLine($"Input folder: {inputFolder}");
             Console.WriteLine($"Output folder: {outputFolder}");
             Console.WriteLine();
@@ -75,95 +75,15 @@ namespace RTUPointlistParse
                 Console.WriteLine($"Created output folder: {outputFolder}");
             }
 
-            // Enumerate all PDF files in the input folder
-            var pdfFiles = Directory.GetFiles(inputFolder, "*.pdf");
-            Console.WriteLine($"Found {pdfFiles.Length} PDF file(s) to process");
-            Console.WriteLine();
-
-            if (pdfFiles.Length == 0)
+            // Use the minimal parser algorithm
+            try
             {
-                Console.WriteLine("No PDF files found in the input folder.");
-                return;
+                MinimalParser.ProcessPDFs(inputFolder, outputFolder);
             }
-
-            // Collect all table rows from all PDFs
-            // Note: In a real implementation with text-based PDFs, you would need to:
-            // 1. Distinguish between Status and Analog data based on content or filename
-            // 2. Parse different table structures for each type
-            // For image-based PDFs (like the current example), this will result in empty collections
-            var allStatusRows = new List<TableRow>();
-            var allAnalogRows = new List<TableRow>();
-
-            // Process each PDF file
-            foreach (var pdfFile in pdfFiles)
+            catch (Exception ex)
             {
-                try
-                {
-                    Console.WriteLine($"Processing: {Path.GetFileName(pdfFile)}");
-                    
-                    // Extract text from PDF
-                    string pdfText = ExtractTextFromPdf(pdfFile);
-                    
-                    if (string.IsNullOrWhiteSpace(pdfText))
-                    {
-                        Console.WriteLine($"  Warning: No text extracted from PDF. The PDF may be image-based.");
-                    }
-                    else
-                    {
-                        // Determine type based on filename
-                        string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
-                        
-                        if (fileName.Contains("sh1") || fileName.Contains("status"))
-                        {
-                            // Parse as Status data
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
-                        }
-                        else if (fileName.Contains("sh2") || fileName.Contains("analog"))
-                        {
-                            // Parse as Analog data
-                            var tableRows = ParseAnalogTable(pdfText);
-                            allAnalogRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
-                        }
-                        else
-                        {
-                            // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
-                            allStatusRows.AddRange(tableRows);
-                            Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"  Error processing {Path.GetFileName(pdfFile)}: {ex.Message}");
-                }
-            }
-
-            // Generate a single combined Excel file
-            // Use a generic name or derive from folder/first file
-            string outputFileName = "Control_rtu837_DNP_pointlist_rev00.xlsx";
-            string outputPath = Path.Combine(outputFolder, outputFileName);
-            
-            Console.WriteLine();
-            Console.WriteLine($"Generating combined Excel file: {outputFileName}");
-            GenerateExcel(allStatusRows, allAnalogRows, outputPath);
-            Console.WriteLine($"  Generated: {outputFileName}");
-
-            // Compare generated files with expected output if available
-            string expectedOutputFolder = Path.Combine(
-                Path.GetDirectoryName(inputFolder) ?? "",
-                "Expected Output"
-            );
-
-            if (Directory.Exists(expectedOutputFolder))
-            {
-                Console.WriteLine();
-                Console.WriteLine("Comparing with expected output...");
-                Console.WriteLine("=================================");
-                CompareOutputFiles(outputFolder, expectedOutputFolder);
+                Console.WriteLine($"Error: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
             }
 
             Console.WriteLine();

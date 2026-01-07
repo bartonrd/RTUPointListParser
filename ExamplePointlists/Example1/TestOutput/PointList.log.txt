@@ -1,0 +1,40 @@
+Processing 2 PDF file(s)
+
+Processing: Control115_sh2_145937196.pdf
+  Page page-1.png: 1676 words, 2 table(s)
+  Extracted 109 point(s)
+
+Processing: Control115_sh1_145934779.pdf
+  Page page-1.png: 3070 words, 2 table(s)
+  Extracted 149 point(s)
+
+Validation:
+  Total points: 258
+  Range: 1 to 942
+  DUPLICATES:
+    Point 10: 2 occurrences
+    Point 71: 2 occurrences
+  GAPS:
+    Missing: 22
+    Missing: 31
+    Missing: 32
+    Missing: 50
+    Missing: 90
+    Missing: 101
+    Missing: 110
+    Missing: 130
+    Missing: 133
+    Missing: 136
+    Missing: 138
+    Missing: 143
+    Missing: 151
+    Missing: 163
+    Missing: 171
+    Missing: 183
+    Missing: 220
+    Missing: 225
+    Missing: 229
+    Missing: 230
+    ... and 666 more
+
+Written: ExamplePointlists/Example1/TestOutput/PointList.xlsx
