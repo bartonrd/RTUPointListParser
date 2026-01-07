@@ -39,29 +39,21 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 
 ## Output Format
 
-The application generates Excel files with two worksheets:
+The application generates Excel files with two worksheets, each containing only the essential point identification columns:
 
 ### Status Sheet
-Contains DNP status point list data with columns including:
-- TAB DEC DNP INDEX
-- CONTROL ADDRESS
-- POINT NAME
-- NORMAL STATE
-- STATE INFO
-- ALARMS
-- EMS CROSS REFERENCE DATA
-- IED INFORMATION
+Contains DNP status point list data with columns:
+- **Point Number**: Sequential index for each point (0-based)
+- **Point Name**: Name/description of the status point
 
 ### Analog Sheet
-Contains DNP analog point list data with columns including:
-- TAB DEC DNP INDEX
-- POINT NAME
-- SCALING (Coefficient, Offset)
-- FULL SCALE (Value, Unit)
-- LIMITS (Low, High)
-- ALARMS
-- EMS CROSS REFERENCE DATA
-- IED INFORMATION
+Contains DNP analog point list data with columns:
+- **Point Number**: Sequential index for each point (0-based)
+- **Point Name**: Name/description of the analog point
+
+**Note**: The parser automatically filters out:
+- Empty rows
+- Rows where the Point Name is "Spare" or "SPARE"
 
 ## Helper Methods
 
@@ -76,19 +68,19 @@ Extracts text content from a PDF file using PdfPig library.
 **Returns:** String containing extracted text
 
 ### `ParseTable(string pdfText)`
-Parses table data from extracted PDF text into structured rows.
+Parses table data from extracted PDF text into structured rows, extracting only Point Number and Point Name columns.
 
 **Parameters:**
 - `pdfText`: Text extracted from PDF
 
-**Returns:** List of `TableRow` objects containing column data
+**Returns:** List of `TableRow` objects containing only Point Number and Point Name
 
 ### `GenerateExcel(List<TableRow> statusRows, List<TableRow> analogRows, string outputPath)`
-Creates an Excel (.xlsx) file with formatted Status and Analog sheets.
+Creates an Excel (.xlsx) file with Status and Analog sheets, each containing Point Number and Point Name columns.
 
 **Parameters:**
-- `statusRows`: Data rows for Status sheet
-- `analogRows`: Data rows for Analog sheet
+- `statusRows`: Data rows for Status sheet (Point Number and Point Name)
+- `analogRows`: Data rows for Analog sheet (Point Number and Point Name)
 - `outputPath`: Full path where Excel file will be saved
 
 ### `CompareExcelFiles(string generatedFile, string expectedFile)`
