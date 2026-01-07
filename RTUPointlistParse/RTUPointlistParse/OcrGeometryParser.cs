@@ -272,9 +272,11 @@ namespace RTUPointlistParse
                 int pointNumberColumnLeft = Math.Max(0, pointWord.Left - 400);
                 int pointNumberColumnRight = pointWord.Left - 50; // Leave gap before name column
 
-                // Point Name column: Based on "POINT NAME" header position
-                int pointNameColumnLeft = pointWord.Left - COLUMN2_EXPANSION;
-                int pointNameColumnRight = nameWord.Right + COLUMN2_EXPANSION;
+                // Point Name column: Based on "POINT NAME" header position, but extended left
+                // to capture data that might not align exactly with the header
+                // Typically point name data starts right after the point number column
+                int pointNameColumnLeft = pointNumberColumnRight + 10; // Start right after point number column
+                int pointNameColumnRight = pointWord.Left + 800; // Extend right to capture full names (but not too far)
 
                 // Table starts below the header
                 int headerBottomY = nameWord.Bottom;
@@ -377,10 +379,12 @@ namespace RTUPointlistParse
                     continue;
                 }
 
-                // Find all words in Column 2 band or to the right of Point Number
-                // Point name is everything after the point number in the row
+                // Find all words in the Point Name column band only (not the entire row)
+                // The point name column should be limited to the defined band
                 var pointNameWords = cluster.Where(w =>
-                    w.Left > pointNumWord.Right &&
+                    w.CenterX >= header.PointNameColumnLeft &&
+                    w.CenterX <= header.PointNameColumnRight &&
+                    w.Left > pointNumWord.Right && // Must be after the point number
                     !IsNumericToken(w.Text)) // Exclude pure numeric tokens
                     .OrderBy(w => w.Left)
                     .ToList();
