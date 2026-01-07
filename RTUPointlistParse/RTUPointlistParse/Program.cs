@@ -20,10 +20,10 @@ namespace RTUPointlistParse
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
-            new System.Text.RegularExpressions.Regex(@"^\d+\s*[|\[]", 
+            new System.Text.RegularExpressions.Regex(@"^\s*\d+\s+", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex IndexExtractionPattern =
-            new System.Text.RegularExpressions.Regex(@"^(\d+)\s*[|\[](.+)", 
+            new System.Text.RegularExpressions.Regex(@"^\s*(\d+)\s+(.+)", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex AlarmClassPattern =
             new System.Text.RegularExpressions.Regex(@"Class\s+(\d+)", 
@@ -151,6 +151,100 @@ namespace RTUPointlistParse
 
             Console.WriteLine();
             Console.WriteLine("Processing complete.");
+            
+            // Verify extracted point names match expected list
+            VerifyExtractedPointNames(allStatusRows, allAnalogRows);
+        }
+
+        /// <summary>
+        /// Verify that extracted point names match the expected list
+        /// </summary>
+        private static void VerifyExtractedPointNames(List<TableRow> statusRows, List<TableRow> analogRows)
+        {
+            // Expected point names from the problem statement
+            var expectedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "ZERO REFERENCE", "FULL SCALE", "CALIBRATE", "HWE-INYOKERN 115KV MW", "COSO-HWE-IK 115KV MW",
+                "HWE-INYOKERN 115 MVAR", "COSO-HWE-IK 115 MVAR", "INYO 115KV MW", "INYO 115KV MVAR",
+                "OXBOW NET MW", "OXBOW NET MVAR", "OXBOW VOLTAGE", "OXBOW CURRENT", "OXBOW GROSS MW",
+                "EAST BUS 115 VOLTS", "WEST BUS 115 VOLTS", "BISHOP CRK 3-4 MW", "BISHOP CRK 3-4 MVAR",
+                "CASA D-SHERWIN MW", "CASA D-SHERWIN MVAR", "CASA DIABLO MW", "CASA DIABLO MVAR",
+                "SILVER PEAK A MW", "SILVER PEAK A MVAR", "SILVER PEAK C MW", "SILVER PEAK C MVAR",
+                "1 BANK 115KV MW", "1 BANK 115KV MVAR", "3 BANK 115KV MW", "3 BANK 115KV MVAR",
+                "55KV OPER BUS KV", "115KV BUS FREQUENCY", "AMBIENT TEMPERATURE", "1 BANK IA", "1 BANK IB",
+                "1 BANK IC", "1 BANK IN", "3 BANK IA", "3 BANK IB", "3 BANK IC", "3 BANK IN",
+                "NO.3 BK TAP POS", "INYO 115KV VOLTS", "CASA D 115KV VOLT", "CAS D-SHRWN 115KV VOLT",
+                "HWE-INYOKERN 115KV VOLTS", "COSO-HWE-IK 115KV VOLTS", "BS CK 3-4 115KV VOLTS",
+                "MT.TOM 55KV MW", "MT.TOM 55KV MVAR", "BISHOP CK 5-6 55KV MW", "BISHP CK 5-6 55KV MVAR",
+                "BISHOP CRK2 55 MW", "BISHOP CRK2 55 MVAR", "55KV BUSTIE MW", "55KV BUSTIE MVAR",
+                "SILVER PK C 55KV VOLTS", "SILVER PK A 55KV VOLTS", "BISHOP CRK2 55 VOLT",
+                "INYO 115KV IB", "HWE-INYOKERN 115KV IB", "COSO-HWE-IK 115KV IB", "CASA DBLO 115KV IB",
+                "CAS D-SHRWN 115KV IB", "BIS CK 115KV 3-4 IB", "MT.TOM 55KV IB", "SLVR PK C 55KV IB",
+                "SLVR PK A 55KV IB", "BISHOP CRK 5-6 IB", "BISHOP CRK2 IB", "55KV BUSTIE IB",
+                "NO.1 BK TAP POS", "BUS TIE 115KV MW", "BUS TIE 115KV MVAR", "BUS TIE 115KV IB",
+                "SPARE A 74", "SPARE A 75", "SPARE A 76", "SPARE A 77", "SPARE A 78", "SPARE A 79",
+                "HWE-INYOKERN FLT LOC PRI", "HWE-INYOKERN FLT LOC DUP", "CASA DIABLO FLT LOC",
+                "CASA D-SHRWN FLT LOC", "SILVER PK C FLT LOC PRI", "SILVER PK A FLT LOC PRI",
+                "COSO-HWE-IK FLT LOC PRI", "COSO-HWE-IK FLT LOC DUP", "SILVER PK C FLT LOC DUP",
+                "SILVER PK A FLT LOC DUP"
+            };
+
+            // Collect all extracted point names
+            var extractedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in statusRows.Concat(analogRows))
+            {
+                if (row.Columns.Count > 1)
+                {
+                    var pointName = NormalizeWhitespace(row.Columns[1]);
+                    extractedNames.Add(pointName);
+                }
+            }
+
+            // Find missing and extra names
+            var missingNames = expectedNames.Except(extractedNames, StringComparer.OrdinalIgnoreCase).ToList();
+            var extraNames = extractedNames.Except(expectedNames, StringComparer.OrdinalIgnoreCase).ToList();
+
+            Console.WriteLine();
+            Console.WriteLine("Point Name Verification");
+            Console.WriteLine("=======================");
+            Console.WriteLine($"Expected: {expectedNames.Count} point names");
+            Console.WriteLine($"Extracted: {extractedNames.Count} point names");
+
+            if (missingNames.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"Missing {missingNames.Count} point names:");
+                foreach (var name in missingNames.OrderBy(n => n))
+                {
+                    Console.WriteLine($"  - {name}");
+                }
+            }
+
+            if (extraNames.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"Extra {extraNames.Count} point names (not in expected list):");
+                foreach (var name in extraNames.OrderBy(n => n))
+                {
+                    Console.WriteLine($"  - {name}");
+                }
+            }
+
+            if (missingNames.Count == 0 && extraNames.Count == 0)
+            {
+                Console.WriteLine("✓ All expected point names extracted successfully!");
+            }
+        }
+
+        /// <summary>
+        /// Normalize whitespace in a string (collapse multiple spaces to single space)
+        /// </summary>
+        private static string NormalizeWhitespace(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+            
+            return WhitespaceNormalizePattern.Replace(text.Trim(), " ");
         }
 
         /// <summary>
@@ -442,7 +536,7 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            int pointNumber = 1; // Start at 1
 
             foreach (var line in lines)
             {
@@ -485,7 +579,7 @@ namespace RTUPointlistParse
         {
             var rows = new List<TableRow>();
             var lines = pdfText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            int pointNumber = 0;
+            int pointNumber = 1; // Start at 1
 
             foreach (var line in lines)
             {
@@ -529,15 +623,16 @@ namespace RTUPointlistParse
         }
 
         /// <summary>
-        /// Check if a point name is valid (not empty and does not contain "Spare")
+        /// Check if a point name is valid (not empty and does not equal "Spare" exactly)
         /// Uses case-insensitive comparison to match variations like "SPARE", "Spare", "spare"
+        /// Note: This keeps names that contain "SPARE" like "SPARE A 74" but filters out exact matches
         /// </summary>
         /// <param name="pointName">The point name to validate</param>
         /// <returns>True if the point name is valid, false otherwise</returns>
         private static bool IsValidPointName(string pointName)
         {
             return !string.IsNullOrWhiteSpace(pointName) && 
-                   !pointName.Contains("SPARE", StringComparison.OrdinalIgnoreCase);
+                   !pointName.Equals("SPARE", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -580,23 +675,15 @@ namespace RTUPointlistParse
         {
             try
             {
-                // Pattern: NUMBER | POINT_NAME ... 
+                // Pattern: NUMBER POINT_NAME ... 
                 var match = IndexExtractionPattern.Match(line);
                 if (!match.Success)
                     return null;
 
                 string remainder = match.Groups[2].Value;
 
-                // Split by | to separate sections
-                var sections = remainder.Split('|');
-                if (sections.Length < 1)
-                    return null;
-
-                // First section contains the point name
-                string firstSection = sections[0].Trim();
-
-                // Extract point name (everything before certain keywords)
-                string pointName = ExtractPointName(firstSection);
+                // Extract point name from the remainder (no pipe splitting needed)
+                string pointName = ExtractPointName(remainder);
                 if (string.IsNullOrWhiteSpace(pointName))
                     return null;
 
