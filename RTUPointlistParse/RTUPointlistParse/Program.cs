@@ -17,6 +17,7 @@ namespace RTUPointlistParse
         private const string DEFAULT_NORMAL_STATE = "1";  // Default normal state value
         private const int POINT_NAME_COLUMN_INDEX = 2;  // Column index for point name (Status)
         private const int POINT_NAME_COLUMN_INDEX_ANALOG = 1;  // Column index for point name (Analog)
+        private const string SPARE_POINT_NAME_PREFIX = "SPARE";  // Point name prefix to filter out
 
         // Cached Regex patterns for better performance
         private static readonly System.Text.RegularExpressions.Regex DataRowPattern = 
@@ -581,7 +582,7 @@ namespace RTUPointlistParse
 
                 // Filter out rows where Point Name starts with "Spare" (case-insensitive)
                 // This handles "SPARE", "Spare", "SPARE 3", "SPARE 4f—", etc.
-                if (pointName.StartsWith("SPARE", StringComparison.OrdinalIgnoreCase))
+                if (pointName.StartsWith(SPARE_POINT_NAME_PREFIX, StringComparison.OrdinalIgnoreCase))
                     return null;
 
                 // Build the row with only two columns: Point Number and Point Name
@@ -595,7 +596,7 @@ namespace RTUPointlistParse
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  Warning: Failed to parse simple row: {ex.Message}");
+                Console.WriteLine($"  Warning: Failed to parse Point Number and Point Name from row: {ex.Message}");
                 return null;
             }
         }
