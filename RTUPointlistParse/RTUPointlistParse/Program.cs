@@ -12,6 +12,12 @@ public class App
     private const string DefaultInputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\Input";
     private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
     
+    // Table detection constants
+    private const int DefaultDpi = 300;
+    private const int DefaultColumnWidth = 150;
+    private const int ColumnBandXOffset = 10;
+    private const int RowClusterYTolerance = 15;
+    
     private readonly List<string> _logLines = new();
 
     public async Task<int> RunAsync(string inputFolder, string outputFolder, string? tessDataEnvVar, string? tessLangEnvVar)
@@ -44,8 +50,30 @@ public class App
                     return 1;
                 }
 
-                var tessDataPath = Environment.GetEnvironmentVariable(tessDataEnvVar ?? "TESSDATA_DIR") ?? 
-                                   Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..", "..", "tessdata");
+                var tessDataPath = Environment.GetEnvironmentVariable(tessDataEnvVar ?? "TESSDATA_DIR");
+                
+                // If not in environment, try to find tessdata in parent directories
+                if (string.IsNullOrEmpty(tessDataPath))
+                {
+                    var currentDir = Directory.GetCurrentDirectory();
+                    var searchDir = currentDir;
+                    
+                    // Search up the directory tree for tessdata folder
+                    for (int i = 0; i < 5; i++)
+                    {
+                        var testPath = Path.Combine(searchDir, "tessdata");
+                        if (Directory.Exists(testPath))
+                        {
+                            tessDataPath = testPath;
+                            break;
+                        }
+                        
+                        var parentDir = Directory.GetParent(searchDir);
+                        if (parentDir == null) break;
+                        searchDir = parentDir.FullName;
+                    }
+                }
+                
                 var tessLang = Environment.GetEnvironmentVariable(tessLangEnvVar ?? "TESSERACT_LANG") ?? "eng";
 
                 if (!Directory.Exists(tessDataPath))
@@ -63,7 +91,7 @@ public class App
                     {
                         Log($"Processing: {Path.GetFileName(pdfPath)}");
 
-                        var bitmaps = RenderPdfToBitmaps(pdfPath, 300, Log);
+                        var bitmaps = RenderPdfToBitmaps(pdfPath, DefaultDpi, Log);
                         Log($"  Rendered {bitmaps.Count} page(s)");
 
                         foreach (var bitmap in bitmaps)
@@ -230,7 +258,7 @@ public class App
 
         // Find the leftmost header column (Point Number)
         var col1X = pointWords.Min(w => w.Bounds.X);
-        var col1Width = 150; // approximate width for point number column
+        var col1Width = DefaultColumnWidth; // approximate width for point number column
 
         // Find the next column to the right (Point Name)
         var nameWords = words.Where(w => 
@@ -245,8 +273,8 @@ public class App
         var col2Width = words.Max(w => w.Bounds.Right) - col2X;
 
         return (
-            new Rectangle(col1X - 10, 0, col1Width, pageHeight),
-            new Rectangle(col2X - 10, 0, col2Width, pageHeight)
+            new Rectangle(col1X - ColumnBandXOffset, 0, col1Width, pageHeight),
+            new Rectangle(col2X - ColumnBandXOffset, 0, col2Width, pageHeight)
         );
     }
 
@@ -273,7 +301,7 @@ public class App
         var rows = new List<(int PointNumber, string PointName)>();
 
         // Cluster words into rows
-        var rowClusters = ClusterWordsIntoRows(words, 15).OrderBy(r => r.Y);
+        var rowClusters = ClusterWordsIntoRows(words, RowClusterYTolerance).OrderBy(r => r.Y);
 
         foreach (var row in rowClusters)
         {
