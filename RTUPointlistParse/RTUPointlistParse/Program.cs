@@ -565,56 +565,71 @@ namespace RTUPointlistParse
             
             try
             {
-                // Each OCR line contains TWO tables side by side
-                // Strategy: Find ALL entries in the line that match the pattern "DEC# | POINT_NAME"
-                // and extract point names from each
+                // Each OCR line is pipe-delimited with multiple sections
+                // Point names typically appear in sections 1 and later sections (right column)
                 
-                // Split line by common separators between columns: sequences of =, _, —, or spaces followed by a DEC number
-                // This regex splits on patterns like "= 82 |" or "_ 85 |"
-                var splitPattern = new System.Text.RegularExpressions.Regex(@"([=_\s—]{2,})(\d{2,3})\s*[|\[]");
+                var sections = line.Split('|');
                 
-                // Find all split positions
-                var splitMatches = splitPattern.Matches(line);
-                
-                // Extract entries: start of line, and after each split point
-                var entries = new List<string>();
-                
-                int lastEnd = 0;
-                foreach (System.Text.RegularExpressions.Match splitMatch in splitMatches)
+                // Extract from section 1 (left column point name)
+                if (sections.Length > 1)
                 {
-                    // Extract from last position to this split
-                    string entry = line.Substring(lastEnd, splitMatch.Index - lastEnd + splitMatch.Length);
-                    if (!string.IsNullOrWhiteSpace(entry))
+                    string leftSection = sections[1].Trim();
+                    string pointName = ExtractPointName(leftSection);
+                    
+                    if (!string.IsNullOrWhiteSpace(pointName) && IsValidPointName(pointName) && pointName.Length > 3)
                     {
-                        entries.Add(entry);
-                    }
-                    lastEnd = splitMatch.Index + splitMatch.Length;
-                }
-                
-                // Don't forget the last part after the final split
-                if (lastEnd < line.Length)
-                {
-                    string lastEntry = line.Substring(lastEnd);
-                    if (!string.IsNullOrWhiteSpace(lastEntry))
-                    {
-                        entries.Add(lastEntry);
-                    }
-                }
-                
-                // If no splits found, treat entire line as one entry
-                if (entries.Count == 0)
-                {
-                    entries.Add(line);
-                }
-                
-                // Parse each entry
-                foreach (var entry in entries)
-                {
-                    var row = ParseSingleColumnEntry(entry, pointNumber);
-                    if (row != null)
-                    {
-                        result.Add(row);
+                        result.Add(new TableRow 
+                        { 
+                            Columns = new List<string> 
+                            { 
+                                pointNumber.ToString(), 
+                                pointName 
+                            } 
+                        });
                         pointNumber++;
+                    }
+                }
+                
+                // Look for right column point name in sections 2-5
+                // The right column can appear in various sections depending on how OCR split the line
+                for (int i = 2; i < Math.Min(sections.Length, 6); i++)
+                {
+                    string section = sections[i].Trim();
+                    
+                    // Skip sections that are clearly state info (OPEN, CLOSE, etc.)
+                    if (section.Contains("OPEN") || section.Contains("CLOSE") ||
+                        section.Contains("ALARM") || section.Contains("NORMAL") ||
+                        section.Contains("95-") || section.Contains("DI ") ||
+                        section.Contains("RM ") || section.Length < 5)
+                    {
+                        continue;
+                    }
+                    
+                    // Try to extract a point name from this section
+                    // It may start with separators and a DEC number
+                    string cleanedSection = section;
+                    
+                    // Remove leading separators and numbers
+                    cleanedSection = new System.Text.RegularExpressions.Regex(@"^[=_\s—]+\d{1,3}\s*").Replace(cleanedSection, "");
+                    
+                    string pointName = ExtractPointName(cleanedSection);
+                    
+                    if (!string.IsNullOrWhiteSpace(pointName) && IsValidPointName(pointName) && pointName.Length > 3)
+                    {
+                        // Check if this looks like a valid point name (has at least 2 words or contains "KV" or "BANK")
+                        if (pointName.Split(' ').Length >= 2 || pointName.Contains("KV") || pointName.Contains("BANK") || pointName.Contains("BUS"))
+                        {
+                            result.Add(new TableRow 
+                            { 
+                                Columns = new List<string> 
+                                { 
+                                    pointNumber.ToString(), 
+                                    pointName 
+                                } 
+                            });
+                            pointNumber++;
+                            break;  // Only extract one from right column per line
+                        }
                     }
                 }
             }
