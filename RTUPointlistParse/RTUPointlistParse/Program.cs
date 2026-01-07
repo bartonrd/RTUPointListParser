@@ -83,12 +83,12 @@ public class App
                                 var words = OcrWordsFromBitmap(bmp, engine);
                                 Log($"  Page {pageIndex + 1}: Extracted {words.Count} words via OCR");
 
-                                var headers = DetectPointNumberHeaders(words);
+                                var headers = DetectPointNumberHeaders(words, pageIndex, pdfPath);
                                 Log($"  Page {pageIndex + 1}: Detected {headers.Count} 'Point Number' header(s)");
 
                                 if (headers.Count > 0)
                                 {
-                                    var rows = ExtractRowsFromHeaders(words, headers, Log);
+                                    var rows = ExtractRowsFromHeaders(words, headers, Log, pageIndex, pdfPath);
                                     allRows.AddRange(rows);
                                     Log($"  Page {pageIndex + 1}: Extracted {rows.Count()} data row(s)");
                                 }
@@ -198,14 +198,20 @@ public class App
                 }
             }
         }
-        catch (Exception)
+        catch (TesseractException ex)
         {
-            // Silently handle OCR errors
+            // Log Tesseract-specific errors but continue processing
+            Console.WriteLine($"  OCR error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // Log unexpected errors but continue processing
+            Console.WriteLine($"  Unexpected OCR error: {ex.Message}");
         }
         return words;
     }
 
-    public static List<TableHeader> DetectPointNumberHeaders(List<OcrWord> words)
+    public static List<TableHeader> DetectPointNumberHeaders(List<OcrWord> words, int pageIndex, string sourceFile)
     {
         var headers = new List<TableHeader>();
         
@@ -223,7 +229,7 @@ public class App
                         if (xOverlap > 0 && nextWord.Bounds.Top > word.Bounds.Bottom)
                         {
                             var combinedBounds = Rectangle.Union(word.Bounds, nextWord.Bounds);
-                            headers.Add(new TableHeader(combinedBounds, 0, ""));
+                            headers.Add(new TableHeader(combinedBounds, pageIndex, sourceFile));
                             break;
                         }
                     }
@@ -234,7 +240,7 @@ public class App
         return headers;
     }
 
-    public static IEnumerable<RowCluster> ClusterWordsIntoRows(List<OcrWord> words, int yTolerance)
+    public static IEnumerable<RowCluster> ClusterWordsIntoRows(List<OcrWord> words, int yTolerance, int pageIndex, string sourceFile)
     {
         var clusters = new Dictionary<int, List<OcrWord>>();
         
@@ -250,13 +256,15 @@ public class App
         }
         
         return clusters.OrderBy(kvp => kvp.Key)
-            .Select(kvp => new RowCluster(0, "", kvp.Key, kvp.Value.OrderBy(w => w.Bounds.X).ToList()));
+            .Select(kvp => new RowCluster(pageIndex, sourceFile, kvp.Key, kvp.Value.OrderBy(w => w.Bounds.X).ToList()));
     }
 
     public static IEnumerable<(int PointNumber, string PointName)> ExtractRowsFromHeaders(
         List<OcrWord> words, 
         List<TableHeader> headers, 
-        Action<string> log)
+        Action<string> log,
+        int pageIndex,
+        string sourceFile)
     {
         var rows = new List<(int PointNumber, string PointName)>();
         
@@ -266,7 +274,7 @@ public class App
                 .Where(w => w.Bounds.Top > header.Bounds.Bottom && w.Bounds.Bottom < header.Bounds.Bottom + 2000)
                 .ToList();
             
-            var rowClusters = ClusterWordsIntoRows(belowHeaderWords, 15);
+            var rowClusters = ClusterWordsIntoRows(belowHeaderWords, 15, pageIndex, sourceFile);
             
             foreach (var cluster in rowClusters)
             {
@@ -333,9 +341,10 @@ public class App
         var uniqueSorted = numList.Distinct().OrderBy(n => n).ToList();
         if (uniqueSorted.Count > 0)
         {
+            var uniqueSet = new HashSet<int>(uniqueSorted);
             for (int i = 1; i <= uniqueSorted[uniqueSorted.Count - 1]; i++)
             {
-                if (!uniqueSorted.Contains(i))
+                if (!uniqueSet.Contains(i))
                 {
                     gaps.Add(i);
                 }
@@ -382,6 +391,8 @@ public class Program
 
     public static async Task<int> Main(string[] args)
     {
-        return await new App().RunAsync(DefaultInputFolder, DefaultOutputFolder, "TESSDATA_DIR", "TESSERACT_LANG");
+        string inputFolder = args.Length > 0 ? args[0] : DefaultInputFolder;
+        string outputFolder = args.Length > 1 ? args[1] : DefaultOutputFolder;
+        return await new App().RunAsync(inputFolder, outputFolder, "TESSDATA_DIR", "TESSERACT_LANG");
     }
 }
