@@ -2,6 +2,8 @@
 using ClosedXML.Excel;
 using System.Text;
 using System.Diagnostics;
+using System.Xml.Linq;
+using System.Text.RegularExpressions;
 
 namespace RTUPointlistParse
 {
@@ -101,38 +103,64 @@ namespace RTUPointlistParse
                 {
                     Console.WriteLine($"Processing: {Path.GetFileName(pdfFile)}");
                     
-                    // Extract text from PDF
-                    string pdfText = ExtractTextFromPdf(pdfFile);
+                    // Try geometry-based OCR parsing first
+                    var tableRows = ParseTableWithGeometry(pdfFile);
                     
-                    if (string.IsNullOrWhiteSpace(pdfText))
-                    {
-                        Console.WriteLine($"  Warning: No text extracted from PDF. The PDF may be image-based.");
-                    }
-                    else
+                    if (tableRows.Count > 0)
                     {
                         // Determine type based on filename
                         string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
                         
                         if (fileName.Contains("sh1") || fileName.Contains("status"))
                         {
-                            // Parse as Status data
-                            var tableRows = ParseStatusTable(pdfText);
                             allStatusRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Status rows");
                         }
                         else if (fileName.Contains("sh2") || fileName.Contains("analog"))
                         {
-                            // Parse as Analog data
-                            var tableRows = ParseAnalogTable(pdfText);
                             allAnalogRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} Analog rows");
                         }
                         else
                         {
                             // Unknown type - try to parse as status
-                            var tableRows = ParseStatusTable(pdfText);
                             allStatusRows.AddRange(tableRows);
                             Console.WriteLine($"  Extracted {tableRows.Count} rows (assumed Status)");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  Warning: No data extracted using geometry-based parsing");
+                        
+                        // Fallback to text-based extraction
+                        string pdfText = ExtractTextFromPdf(pdfFile);
+                        
+                        if (!string.IsNullOrWhiteSpace(pdfText))
+                        {
+                            // Determine type based on filename
+                            string fileName = Path.GetFileNameWithoutExtension(pdfFile).ToLower();
+                            
+                            if (fileName.Contains("sh1") || fileName.Contains("status"))
+                            {
+                                // Parse as Status data
+                                var fallbackRows = ParseStatusTable(pdfText);
+                                allStatusRows.AddRange(fallbackRows);
+                                Console.WriteLine($"  Extracted {fallbackRows.Count} Status rows (fallback)");
+                            }
+                            else if (fileName.Contains("sh2") || fileName.Contains("analog"))
+                            {
+                                // Parse as Analog data
+                                var fallbackRows = ParseAnalogTable(pdfText);
+                                allAnalogRows.AddRange(fallbackRows);
+                                Console.WriteLine($"  Extracted {fallbackRows.Count} Analog rows (fallback)");
+                            }
+                            else
+                            {
+                                // Unknown type - try to parse as status
+                                var fallbackRows = ParseStatusTable(pdfText);
+                                allStatusRows.AddRange(fallbackRows);
+                                Console.WriteLine($"  Extracted {fallbackRows.Count} rows (assumed Status, fallback)");
+                            }
                         }
                     }
                 }
@@ -449,6 +477,518 @@ namespace RTUPointlistParse
                 Console.WriteLine($"  OCR extraction error: {ex.Message}");
                 return string.Empty;
             }
+        }
+
+        /// <summary>
+        /// Extract words with bounding boxes from PDF using OCR with hOCR format
+        /// </summary>
+        private static List<OcrWord> ExtractWordsWithBoundingBoxes(string pdfPath)
+        {
+            var allWords = new List<OcrWord>();
+
+            try
+            {
+                Console.WriteLine($"  Performing OCR with bounding box extraction...");
+                
+                // Check if required tools are available
+                if (!IsToolAvailable("pdftoppm") || !IsToolAvailable("tesseract"))
+                {
+                    Console.WriteLine("  ERROR: Required OCR tools not found.");
+                    return allWords;
+                }
+                
+                // Create a temporary directory for image files
+                string tempDir = Path.Combine(Path.GetTempPath(), $"pdf_ocr_{Guid.NewGuid()}");
+                Directory.CreateDirectory(tempDir);
+
+                try
+                {
+                    // Convert PDF pages to images using pdftoppm at 300 DPI
+                    var ppmProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "pdftoppm",
+                            Arguments = $"-png -r 300 \"{pdfPath}\" \"{Path.Combine(tempDir, "page")}\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    ppmProcess.Start();
+                    ppmProcess.WaitForExit();
+
+                    if (ppmProcess.ExitCode != 0)
+                    {
+                        var error = ppmProcess.StandardError.ReadToEnd();
+                        Console.WriteLine($"  Error converting PDF to images: {error}");
+                        return allWords;
+                    }
+
+                    // Get all generated image files
+                    var imageFiles = Directory.GetFiles(tempDir, "*.png").OrderBy(f => f).ToArray();
+                    
+                    if (imageFiles.Length == 0)
+                    {
+                        Console.WriteLine($"  No images generated from PDF");
+                        return allWords;
+                    }
+
+                    // Perform OCR on each page image with hOCR output
+                    foreach (var imageFile in imageFiles)
+                    {
+                        string hocrFile = Path.Combine(tempDir, $"{Path.GetFileNameWithoutExtension(imageFile)}_hocr");
+                        
+                        using (var tessProcess = new Process
+                        {
+                            StartInfo = new ProcessStartInfo
+                            {
+                                FileName = "tesseract",
+                                Arguments = $"\"{imageFile}\" \"{hocrFile}\" hocr",
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true,
+                                UseShellExecute = false,
+                                CreateNoWindow = true
+                            }
+                        })
+                        {
+                            tessProcess.Start();
+                            tessProcess.WaitForExit();
+
+                            if (tessProcess.ExitCode == 0)
+                            {
+                                string hocrFilePath = hocrFile + ".hocr";
+                                if (File.Exists(hocrFilePath))
+                                {
+                                    var pageWords = ParseHocrFile(hocrFilePath);
+                                    allWords.AddRange(pageWords);
+                                }
+                            }
+                        }
+                    }
+
+                    Console.WriteLine($"  OCR completed: extracted {allWords.Count} words from {imageFiles.Length} page(s)");
+                    return allWords;
+                }
+                finally
+                {
+                    // Clean up temporary files
+                    try
+                    {
+                        Directory.Delete(tempDir, true);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup errors
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  OCR extraction error: {ex.Message}");
+                return allWords;
+            }
+        }
+
+        /// <summary>
+        /// Parse hOCR file to extract words with bounding boxes
+        /// </summary>
+        private static List<OcrWord> ParseHocrFile(string hocrFilePath)
+        {
+            var words = new List<OcrWord>();
+
+            try
+            {
+                var doc = XDocument.Load(hocrFilePath);
+                var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
+
+                // Find all word elements (ocrx_word class)
+                var wordElements = doc.Descendants()
+                    .Where(e => e.Attribute("class")?.Value.Contains("ocrx_word") == true);
+
+                foreach (var wordElement in wordElements)
+                {
+                    var titleAttr = wordElement.Attribute("title")?.Value;
+                    var textContent = wordElement.Value.Trim();
+
+                    if (string.IsNullOrWhiteSpace(textContent) || string.IsNullOrWhiteSpace(titleAttr))
+                        continue;
+
+                    // Parse bounding box from title attribute
+                    // Format: "bbox x0 y0 x1 y1; x_wconf confidence"
+                    var bboxMatch = Regex.Match(titleAttr, @"bbox\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)");
+                    var confMatch = Regex.Match(titleAttr, @"x_wconf\s+(\d+)");
+
+                    if (bboxMatch.Success)
+                    {
+                        int x0 = int.Parse(bboxMatch.Groups[1].Value);
+                        int y0 = int.Parse(bboxMatch.Groups[2].Value);
+                        int x1 = int.Parse(bboxMatch.Groups[3].Value);
+                        int y1 = int.Parse(bboxMatch.Groups[4].Value);
+                        float confidence = confMatch.Success ? float.Parse(confMatch.Groups[1].Value) : 0f;
+
+                        words.Add(new OcrWord
+                        {
+                            Text = textContent,
+                            X = x0,
+                            Y = y0,
+                            Width = x1 - x0,
+                            Height = y1 - y0,
+                            Confidence = confidence
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Error parsing hOCR file: {ex.Message}");
+            }
+
+            return words;
+        }
+
+        /// <summary>
+        /// Parse table using OCR geometry-based approach
+        /// Detects headers, defines column bands, clusters rows, and extracts data
+        /// </summary>
+        private static List<TableRow> ParseTableWithGeometry(string pdfPath)
+        {
+            var allRows = new List<TableRow>();
+
+            try
+            {
+                // Step 1: Extract words with bounding boxes from OCR
+                var words = ExtractWordsWithBoundingBoxes(pdfPath);
+                if (words.Count == 0)
+                {
+                    Console.WriteLine("  No words extracted from OCR");
+                    return allRows;
+                }
+
+                // Step 2: Detect table headers (POINT/NUMBER and POINT NAME)
+                var headers = DetectTableHeaders(words);
+                if (headers.Count == 0)
+                {
+                    Console.WriteLine("  No table headers detected");
+                    return allRows;
+                }
+
+                Console.WriteLine($"  Detected {headers.Count} table(s) on the page");
+
+                // Step 3-6: Process each table independently
+                foreach (var header in headers)
+                {
+                    var tableRows = ExtractTableRows(words, header);
+                    allRows.AddRange(tableRows);
+                }
+
+                return allRows;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Error in geometry-based parsing: {ex.Message}");
+                return allRows;
+            }
+        }
+
+        /// <summary>
+        /// Detect table headers: stacked "POINT" over "NUMBER" and adjacent "POINT NAME"
+        /// </summary>
+        private static List<TableHeader> DetectTableHeaders(List<OcrWord> words)
+        {
+            var headers = new List<TableHeader>();
+            const int HORIZONTAL_OVERLAP_TOLERANCE = 50;
+            const int VERTICAL_STACKING_TOLERANCE = 60;  // Distance for vertical stacking
+            const int HORIZONTAL_ADJACENCY_TOLERANCE = 300;  // Distance for horizontal adjacency
+
+            // Find all "POINT" words (case-insensitive)
+            var pointWords = words.Where(w => w.Text.Equals("POINT", StringComparison.OrdinalIgnoreCase)).ToList();
+            Console.WriteLine($"    Found {pointWords.Count} 'POINT' words");
+
+            // Also look for "NUMBER" words
+            var numberWords = words.Where(w => w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase)).ToList();
+            Console.WriteLine($"    Found {numberWords.Count} 'NUMBER' words");
+
+            // Debug: Show some sample words
+            if (pointWords.Count < 5)
+            {
+                Console.WriteLine($"    Sample words: {string.Join(", ", words.Take(40).Select(w => $"{w.Text}@({w.X},{w.Y})"))}");
+            }
+
+            foreach (var pointWord in pointWords)
+            {
+                // Look for "NUMBER" word below this "POINT" (stacked vertically)
+                var numberWord = words.FirstOrDefault(w =>
+                    w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase) &&
+                    Math.Abs(w.CenterX - pointWord.CenterX) <= HORIZONTAL_OVERLAP_TOLERANCE &&
+                    w.Y > pointWord.Bottom &&
+                    w.Y - pointWord.Bottom <= VERTICAL_STACKING_TOLERANCE);
+
+                // If not found vertically stacked, look for "NUMBER" horizontally adjacent (side by side)
+                if (numberWord == null)
+                {
+                    numberWord = words.FirstOrDefault(w =>
+                        w.Text.Equals("NUMBER", StringComparison.OrdinalIgnoreCase) &&
+                        Math.Abs(w.CenterY - pointWord.CenterY) <= 20 &&  // Same horizontal line
+                        w.X > pointWord.Right - 20 &&  // To the right
+                        w.X - pointWord.Right <= 100);  // Close by
+                }
+
+                if (numberWord == null)
+                {
+                    Console.WriteLine($"    POINT at ({pointWord.X}, {pointWord.Y}) - no matching NUMBER found");
+                    continue;
+                }
+
+                Console.WriteLine($"    Found POINT/NUMBER pair at ({pointWord.X}, {pointWord.Y}) and ({numberWord.X}, {numberWord.Y})");
+
+                // Found POINT/NUMBER - now look for "POINT NAME" header nearby
+                var pointNameWords = FindPointNameHeader(words, pointWord, numberWord, HORIZONTAL_ADJACENCY_TOLERANCE);
+
+                if (pointNameWords == null)
+                {
+                    Console.WriteLine($"    No POINT NAME header found for this pair");
+                    continue;
+                }
+
+                var (pointWord2, nameWord) = pointNameWords.Value;
+                Console.WriteLine($"    Found complete header: POINT/NUMBER at ({pointWord.X}, {pointWord.Y}), POINT NAME at ({pointWord2.X}, {pointWord2.Y})");
+
+                // Create table header
+                var header = new TableHeader
+                {
+                    PointNumberColumnX = pointWord.CenterX,
+                    PointNumberColumnWidth = Math.Max(pointWord.Width, numberWord.Width) + 40, // Expand band
+                    PointNameColumnX = pointWord2.CenterX,
+                    PointNameColumnWidth = (nameWord.Right - pointWord2.X) + 60, // Expand band
+                    HeaderBottomY = Math.Max(numberWord.Bottom, nameWord.Bottom),
+                    TableEndY = int.MaxValue // Will be refined if another header is found
+                };
+
+                headers.Add(header);
+            }
+
+            // Sort headers by Y position and set table end boundaries
+            headers = headers.OrderBy(h => h.HeaderBottomY).ToList();
+            for (int i = 0; i < headers.Count - 1; i++)
+            {
+                headers[i].TableEndY = headers[i + 1].HeaderBottomY;
+            }
+
+            return headers;
+        }
+
+        /// <summary>
+        /// Find "POINT NAME" header words adjacent to the POINT/NUMBER
+        /// </summary>
+        private static (OcrWord, OcrWord)? FindPointNameHeader(List<OcrWord> words, OcrWord pointWord, OcrWord numberWord, int tolerance)
+        {
+            const int VERTICAL_TOLERANCE = 30;
+
+            // Determine the reference Y position (use pointWord or numberWord depending on layout)
+            int referenceY = pointWord.CenterY;
+            int referenceRight = Math.Max(pointWord.Right, numberWord.Right);
+
+            // Find "POINT" word to the right of the first POINT/NUMBER (in a similar vertical band)
+            var pointWord2 = words.FirstOrDefault(w =>
+                w.Text.Equals("POINT", StringComparison.OrdinalIgnoreCase) &&
+                w.X > referenceRight &&
+                w.X - referenceRight <= tolerance &&
+                Math.Abs(w.CenterY - referenceY) <= VERTICAL_TOLERANCE);
+
+            // Also try looking for NAME directly if POINT is not found
+            if (pointWord2 == null)
+            {
+                // Maybe "POINT" is missing, look for "NAME" directly
+                var nameWord = words.FirstOrDefault(w =>
+                    w.Text.Equals("NAME", StringComparison.OrdinalIgnoreCase) &&
+                    w.X > referenceRight &&
+                    w.X - referenceRight <= tolerance &&
+                    Math.Abs(w.CenterY - referenceY) <= VERTICAL_TOLERANCE);
+
+                if (nameWord != null)
+                {
+                    // Use the nameWord as both (faking the POINT word for column positioning)
+                    return (nameWord, nameWord);
+                }
+                return null;
+            }
+
+            // Find "NAME" word adjacent to the second POINT
+            var nameWord2 = words.FirstOrDefault(w =>
+                w.Text.Equals("NAME", StringComparison.OrdinalIgnoreCase) &&
+                w.X >= pointWord2.Right - 20 &&  // Can be slightly overlapping
+                w.X - pointWord2.Right <= 100 &&   // Close to POINT
+                Math.Abs(w.CenterY - pointWord2.CenterY) <= VERTICAL_TOLERANCE);
+
+            if (nameWord2 == null)
+                return null;
+
+            return (pointWord2, nameWord2);
+        }
+
+        /// <summary>
+        /// Extract table rows from words using the detected header and column bands
+        /// </summary>
+        private static List<TableRow> ExtractTableRows(List<OcrWord> words, TableHeader header)
+        {
+            var rows = new List<TableRow>();
+
+            // Filter words that are within the table's vertical scope
+            var tableWords = words.Where(w =>
+                w.Y >= header.HeaderBottomY &&
+                w.Y < header.TableEndY).ToList();
+
+            if (tableWords.Count == 0)
+                return rows;
+
+            // Step 4: Cluster words into rows by Y coordinate
+            var rowClusters = ClusterWordsIntoRows(tableWords);
+
+            // Step 5: Extract Point Number and Point Name from each row
+            int pointNumber = 0;
+            foreach (var cluster in rowClusters)
+            {
+                var row = ExtractRowData(cluster.Words, header);
+                if (row != null)
+                {
+                    // Assign sequential point number
+                    row.Columns[0] = pointNumber.ToString();
+                    rows.Add(row);
+                    pointNumber++;
+                }
+            }
+
+            return rows;
+        }
+
+        /// <summary>
+        /// Cluster words into rows based on Y coordinate proximity
+        /// </summary>
+        private static List<RowCluster> ClusterWordsIntoRows(List<OcrWord> words)
+        {
+            const int Y_TOLERANCE = 10;  // Pixels tolerance for same row
+            var clusters = new List<RowCluster>();
+
+            // Sort words by Y coordinate
+            var sortedWords = words.OrderBy(w => w.CenterY).ToList();
+
+            foreach (var word in sortedWords)
+            {
+                // Find existing cluster within Y tolerance
+                var cluster = clusters.FirstOrDefault(c => Math.Abs(c.Y - word.CenterY) <= Y_TOLERANCE);
+
+                if (cluster == null)
+                {
+                    // Create new cluster
+                    cluster = new RowCluster { Y = word.CenterY };
+                    clusters.Add(cluster);
+                }
+                else
+                {
+                    // Update average Y
+                    cluster.Y = (cluster.Y * cluster.Words.Count + word.CenterY) / (cluster.Words.Count + 1);
+                }
+
+                cluster.Words.Add(word);
+            }
+
+            // Sort clusters by Y (top to bottom) and words within each cluster by X (left to right)
+            clusters = clusters.OrderBy(c => c.Y).ToList();
+            foreach (var cluster in clusters)
+            {
+                cluster.Words = cluster.Words.OrderBy(w => w.X).ToList();
+            }
+
+            return clusters;
+        }
+
+        /// <summary>
+        /// Extract Point Number and Point Name from a row cluster using column bands
+        /// </summary>
+        private static TableRow? ExtractRowData(List<OcrWord> rowWords, TableHeader header)
+        {
+            try
+            {
+                // Define column bands
+                int col1Left = header.PointNumberColumnX - header.PointNumberColumnWidth / 2;
+                int col1Right = header.PointNumberColumnX + header.PointNumberColumnWidth / 2;
+                int col2Left = header.PointNameColumnX - header.PointNameColumnWidth / 2;
+                int col2Right = header.PointNameColumnX + header.PointNameColumnWidth / 2;
+
+                // Extract Point Number: first numeric token in column 1 band
+                OcrWord? pointNumberWord = null;
+                foreach (var word in rowWords)
+                {
+                    if (word.CenterX >= col1Left && word.CenterX <= col1Right)
+                    {
+                        // Check if it's a number
+                        if (int.TryParse(word.Text, out _))
+                        {
+                            pointNumberWord = word;
+                            break;
+                        }
+                    }
+                }
+
+                if (pointNumberWord == null)
+                    return null;  // No point number found
+
+                // Extract Point Name: concatenate words in column 2 band or to the right of point number
+                var pointNameWords = new List<OcrWord>();
+                foreach (var word in rowWords)
+                {
+                    // Include words in column 2 band or to the right of point number
+                    if ((word.CenterX >= col2Left && word.CenterX <= col2Right) ||
+                        (word.X >= pointNumberWord.Right))
+                    {
+                        // Skip if it's just the point number itself or common noise
+                        if (word != pointNumberWord && !IsNoiseWord(word.Text))
+                        {
+                            pointNameWords.Add(word);
+                        }
+                    }
+                }
+
+                if (pointNameWords.Count == 0)
+                    return null;  // No point name found
+
+                // Concatenate point name words
+                string pointName = string.Join(" ", pointNameWords.Select(w => w.Text));
+
+                // Filter out invalid point names
+                if (!IsValidPointName(pointName))
+                    return null;
+
+                // Create table row with Point Number and Point Name
+                return new TableRow
+                {
+                    Columns = new List<string> { "0", pointName }  // Point number will be assigned later
+                };
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Warning: Error extracting row data: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Check if a word is common OCR noise
+        /// </summary>
+        private static bool IsNoiseWord(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || text.Length <= 1)
+                return true;
+
+            // Common OCR noise patterns
+            var noisePatterns = new[] { "|", "[", "]", "—", "=", "_", ".", ",", ";", ":" };
+            if (noisePatterns.Contains(text))
+                return true;
+
+            return false;
         }
 
         /// <summary>
@@ -1284,5 +1824,45 @@ namespace RTUPointlistParse
     public class TableRow
     {
         public List<string> Columns { get; set; } = new List<string>();
+    }
+
+    /// <summary>
+    /// Represents a word detected by OCR with its bounding box
+    /// </summary>
+    public class OcrWord
+    {
+        public string Text { get; set; } = "";
+        public int X { get; set; }          // Left edge
+        public int Y { get; set; }          // Top edge
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public float Confidence { get; set; }
+
+        public int Right => X + Width;
+        public int Bottom => Y + Height;
+        public int CenterX => X + Width / 2;
+        public int CenterY => Y + Height / 2;
+    }
+
+    /// <summary>
+    /// Represents a detected table header with column bands
+    /// </summary>
+    public class TableHeader
+    {
+        public int PointNumberColumnX { get; set; }     // Center X of Point Number column
+        public int PointNumberColumnWidth { get; set; }
+        public int PointNameColumnX { get; set; }       // Center X of Point Name column
+        public int PointNameColumnWidth { get; set; }
+        public int HeaderBottomY { get; set; }          // Y coordinate where header ends
+        public int TableEndY { get; set; }              // Y coordinate where table ends
+    }
+
+    /// <summary>
+    /// Represents a row cluster of words at similar Y coordinates
+    /// </summary>
+    public class RowCluster
+    {
+        public int Y { get; set; }                      // Average Y coordinate
+        public List<OcrWord> Words { get; set; } = new List<OcrWord>();
     }
 }
