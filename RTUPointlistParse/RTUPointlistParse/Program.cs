@@ -36,7 +36,7 @@ namespace RTUPointlistParse
             new System.Text.RegularExpressions.Regex(@"\s+", 
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex TwoColumnSplitPattern =
-            new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]",
+            new System.Text.RegularExpressions.Regex(@"\s+(\d{2,3})\s*[_|]+",
                 System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex TrailingSingleLetterPattern =
             new System.Text.RegularExpressions.Regex(@"\s+[A-Z]$",
@@ -583,23 +583,27 @@ namespace RTUPointlistParse
                 return result;
             }
             
-            // Find the best split point - look for indices >= MIN_SECOND_COLUMN_INDEX which typically indicate second column
-            int bestSplitIndex = -1;
+            // Find ALL valid split points - look for indices >= MIN_SECOND_COLUMN_INDEX which typically indicate second column
+            // Process all matches, not just the first one, to handle cases where there are multiple potential second columns
+            var splitIndices = new List<int>();
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
                 if (int.TryParse(match.Groups[1].Value, out int rowIndex))
                 {
                     // Second column typically starts at index >= MIN_SECOND_COLUMN_INDEX
+                    // We're more flexible here - look for row indices that are significantly higher than what would be in the first column
                     if (rowIndex >= MIN_SECOND_COLUMN_INDEX && match.Index > MIN_CHAR_POSITION)
                     {
-                        bestSplitIndex = match.Index;
-                        break;
+                        splitIndices.Add(match.Index);
                     }
                 }
             }
             
-            if (bestSplitIndex > 0)
+            if (splitIndices.Count > 0)
             {
+                // Use the first split point
+                int bestSplitIndex = splitIndices[0];
+                
                 // Split at this point
                 string leftColumn = line.Substring(0, bestSplitIndex).Trim();
                 string rightColumn = line.Substring(bestSplitIndex).Trim();
