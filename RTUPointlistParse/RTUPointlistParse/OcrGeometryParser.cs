@@ -297,21 +297,30 @@ namespace RTUPointlistParse
             }
 
             // Determine table end Y positions based on gaps or next header
-            for (int i = 0; i < headers.Count; i++)
+            // Sort headers by Y position first, then by X position
+            var sortedHeaders = headers.OrderBy(h => h.HeaderBottomY).ThenBy(h => h.PointNumberColumnLeft).ToList();
+            
+            for (int i = 0; i < sortedHeaders.Count; i++)
             {
-                if (i < headers.Count - 1)
+                // For headers on the same horizontal line (side-by-side tables), don't limit each other
+                // Instead, let each table extend to the bottom of the page or a large vertical gap
+                
+                // Find the next header that's significantly below this one (not side-by-side)
+                var nextHeaderBelow = sortedHeaders.Skip(i + 1)
+                    .FirstOrDefault(h => h.HeaderBottomY > sortedHeaders[i].HeaderBottomY + 100);
+                
+                if (nextHeaderBelow != null)
                 {
-                    // End before next header
-                    headers[i].TableEndY = headers[i + 1].HeaderBottomY;
+                    sortedHeaders[i].TableEndY = nextHeaderBelow.HeaderBottomY;
                 }
                 else
                 {
-                    // Last table - find large vertical gap or use page bottom
-                    headers[i].TableEndY = int.MaxValue;
+                    // Last table or no table below - extend to page bottom
+                    sortedHeaders[i].TableEndY = int.MaxValue;
                 }
             }
 
-            return headers;
+            return sortedHeaders;
         }
 
         /// <summary>
@@ -331,6 +340,8 @@ namespace RTUPointlistParse
 
             // Step 4: Cluster words into rows by Y coordinate
             var rowClusters = ClusterWordsIntoRows(tableWords);
+
+            Console.WriteLine($"    Found {rowClusters.Count} row clusters in table");
 
             // Step 5: Extract Point Number and Point Name from each row
             int pointNumber = 0;
@@ -393,6 +404,8 @@ namespace RTUPointlistParse
                     pointNumber++;
                 }
             }
+
+            Console.WriteLine($"    Extracted {rows.Count} valid rows from table");
 
             return rows;
         }
