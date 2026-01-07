@@ -9,23 +9,28 @@ A C# .NET Console Application for parsing RTU point list data from PDF files and
 - **Excel Generation**: Creates formatted .xlsx files with Status and Analog sheets using ClosedXML
 - **File Comparison**: Compares generated Excel files against expected output
 - **Batch Processing**: Processes all PDF files in the input folder and combines them into a single output
+- **Point Name Extraction**: Standalone Python script to extract only "Point Name" column values (see `PointNameExtraction_README.md`)
 
-## Usage
+## Tools
 
-### Command Line
+### C# Application (Full Parsing)
+
+For complete table parsing with all columns.
+
+#### Command Line
 
 ```bash
 dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj [inputFolder] [outputFolder]
 ```
 
-### Parameters
+#### Parameters
 
 - `inputFolder` (optional): Path to folder containing PDF files to parse
   - Default: `ExamplePointlists/Example1/Input`
 - `outputFolder` (optional): Path to folder where Excel files will be saved
   - Default: `ExamplePointlists/Example1/TestOutput`
 
-### Examples
+#### Examples
 
 **Using default folders:**
 ```bash
@@ -36,6 +41,16 @@ dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.cspro
 ```bash
 dotnet run --project RTUPointlistParse/RTUPointlistParse/RTUPointlistParse.csproj "path/to/input" "path/to/output"
 ```
+
+### Python Script (Point Name Extraction Only)
+
+For extracting only "Point Name" column values from PDFs.
+
+```bash
+python3 extract_point_names.py [inputFolder] [outputFolder]
+```
+
+See [PointNameExtraction_README.md](PointNameExtraction_README.md) for detailed usage instructions.
 
 ## Output Format
 
