@@ -10,6 +10,7 @@ import re
 import subprocess
 import tempfile
 import shutil
+import traceback
 from pathlib import Path
 import openpyxl
 from openpyxl.styles import Font
@@ -28,6 +29,13 @@ except ImportError:
     print("Note: pdfplumber not available")
 
 
+# Constants for point name extraction
+MAX_NAME_TOKENS = 10  # Maximum tokens to collect for point names
+MAX_SMALL_NUMBER_LENGTH = 2  # Maximum length for numbers that can be part of names
+STATUS_INDICATORS = ['sh1', 'status']  # Filename patterns indicating Status data
+ANALOG_INDICATORS = ['sh2', 'analog']  # Filename patterns indicating Analog data
+
+
 def check_ocr_tools():
     """Check if OCR tools (tesseract and pdftoppm) are available."""
     try:
@@ -37,6 +45,7 @@ def check_ocr_tools():
         tesseract_available = False
     
     try:
+        # pdftoppm returns exit code 99 for -v, so we don't use check=True
         subprocess.run(['pdftoppm', '-v'], capture_output=True)
         pdftoppm_available = True
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -241,14 +250,14 @@ def extract_point_name_from_section(text):
         # Skip if it's just a standalone number (unless following "NO." or similar)
         if cleaned.isdigit() and len(name_tokens) > 0:
             # Allow small numbers as part of name
-            if len(cleaned) <= 2:
+            if len(cleaned) <= MAX_SMALL_NUMBER_LENGTH:
                 name_tokens.append(cleaned)
             break
         
         name_tokens.append(cleaned)
         
         # Limit tokens to avoid including too much
-        if len(name_tokens) >= 10:
+        if len(name_tokens) >= MAX_NAME_TOKENS:
             break
     
     result = ' '.join(name_tokens).strip()
@@ -372,9 +381,9 @@ def main():
             
             # Determine sheet type from filename
             filename_lower = pdf_file.lower()
-            if 'sh1' in filename_lower or 'status' in filename_lower:
+            if any(indicator in filename_lower for indicator in STATUS_INDICATORS):
                 sheet_type = 'Status'
-            elif 'sh2' in filename_lower or 'analog' in filename_lower:
+            elif any(indicator in filename_lower for indicator in ANALOG_INDICATORS):
                 sheet_type = 'Analog'
             else:
                 # Default to Status
@@ -385,7 +394,6 @@ def main():
             
         except Exception as e:
             print(f"  Error processing {pdf_file}: {e}")
-            import traceback
             traceback.print_exc()
     
     print()
