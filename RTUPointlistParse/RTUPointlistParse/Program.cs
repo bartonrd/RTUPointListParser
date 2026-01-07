@@ -27,10 +27,14 @@ public class App
     private const string DefaultOutputFolder = "C:\\dev\\RTUPointListParser\\ExamplePointlists\\Example1\\TestOutput";
     private const string TessDataEnvVarName = "TESSDATA_DIR";
     private const string TessLangEnvVarName = "TESSERACT_LANG";
+    
+    // Column detection constants
+    private const int ColumnSeparationPixels = 20;  // Minimum horizontal gap between columns
+    private const int LeftColumnThresholdDivisor = 3;  // Use first 1/3 of X positions for left column
 
     private readonly List<string> logLines = new();
 
-    public async Task<int> RunAsync(string inputFolder, string outputFolder, string? tessDataEnvVar, string? tessLangEnvVar)
+    public async Task<int> RunAsync(string inputFolder, string outputFolder, string? tessDataEnvVarName, string? tessLangEnvVarName)
     {
         await Task.CompletedTask; // Make async for future extensibility
 
@@ -62,8 +66,8 @@ public class App
 
         var allRows = new List<(int PointNumber, string PointName)>();
 
-        var tessDataPath = Environment.GetEnvironmentVariable(tessDataEnvVar ?? "TESSDATA_DIR");
-        var tessLang = Environment.GetEnvironmentVariable(tessLangEnvVar ?? "TESSERACT_LANG") ?? "eng";
+        var tessDataPath = Environment.GetEnvironmentVariable(tessDataEnvVarName ?? TessDataEnvVarName);
+        var tessLang = Environment.GetEnvironmentVariable(tessLangEnvVarName ?? TessLangEnvVarName) ?? "eng";
 
         if (string.IsNullOrEmpty(tessDataPath))
         {
@@ -216,8 +220,8 @@ public class App
         // Group words by X position to find vertical columns
         var xPositions = words.Select(w => w.Bounds.X).OrderBy(x => x).ToList();
         
-        // Find leftmost cluster (column 1)
-        var leftWords = words.Where(w => w.Bounds.X < xPositions[words.Count / 3]).ToList();
+        // Find leftmost cluster (column 1) - use first 1/3 of X positions
+        var leftWords = words.Where(w => w.Bounds.X < xPositions[words.Count / LeftColumnThresholdDivisor]).ToList();
         if (leftWords.Count == 0) return null;
 
         var col1MinX = leftWords.Min(w => w.Bounds.X);
@@ -225,8 +229,8 @@ public class App
         var col1MinY = leftWords.Min(w => w.Bounds.Y);
         var col1MaxY = leftWords.Max(w => w.Bounds.Bottom);
 
-        // Find next cluster to the right (column 2)
-        var rightWords = words.Where(w => w.Bounds.X > col1MaxX + 20).ToList();
+        // Find next cluster to the right (column 2) with minimum separation
+        var rightWords = words.Where(w => w.Bounds.X > col1MaxX + ColumnSeparationPixels).ToList();
         if (rightWords.Count == 0) return null;
 
         var col2MinX = rightWords.Min(w => w.Bounds.X);
