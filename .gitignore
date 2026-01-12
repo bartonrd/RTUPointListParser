@@ -419,3 +419,4 @@ FodyWeavers.xsd
 
 # Generated test output files
 **/TestOutput/*.xlsx
+**/TestOutput/*.log.txt
